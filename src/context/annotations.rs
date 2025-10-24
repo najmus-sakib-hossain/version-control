@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::params;
-use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+use uuid::Uuid;
 
 use crate::storage::Database;
 
@@ -101,7 +101,9 @@ pub fn get_annotations(db: &Database, file: &Path, line: Option<usize>) -> Resul
             line: line as usize,
             content,
             author,
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_at).unwrap().into(),
+            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                .unwrap()
+                .into(),
             is_ai,
         })
     })?;

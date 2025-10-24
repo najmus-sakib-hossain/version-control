@@ -3,8 +3,8 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::crdt::Operation;
 use super::Database;
+use crate::crdt::Operation;
 
 pub struct OperationLog {
     db: Arc<Database>,
@@ -20,16 +20,19 @@ impl OperationLog {
         }
     }
 
-    pub async fn append(&self, operation: Operation) -> Result<()> {
+    pub async fn append(&self, operation: Operation) -> Result<bool> {
         // Store in database
-        self.db.store_operation(&operation)?;
+        let inserted = self.db.store_operation(&operation)?;
 
-        // Cache for fast access
-        self.cache.insert(operation.id, operation);
+        if inserted {
+            // Cache for fast access
+            self.cache.insert(operation.id, operation);
+        }
 
-        Ok(())
+        Ok(inserted)
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, id: &Uuid) -> Option<Operation> {
         self.cache.get(id).map(|op| op.clone())
     }

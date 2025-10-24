@@ -1,12 +1,13 @@
 use anyhow::Result;
-use automerge::{AutoCommit, transaction::Transactable, ObjType, ReadDoc, ROOT};
+use automerge::{AutoCommit, ROOT, ReadDoc, transaction::Transactable};
+use parking_lot::RwLock;
 use ropey::Rope;
 use std::path::PathBuf;
-use parking_lot::RwLock;
 use std::sync::Arc;
 
 use super::operations::{Operation, OperationType, Position};
 
+#[allow(dead_code)]
 pub struct CrdtDocument {
     pub path: PathBuf,
     /// Automerge document for CRDT operations
@@ -17,6 +18,7 @@ pub struct CrdtDocument {
     pub lamport: Arc<parking_lot::Mutex<u64>>,
 }
 
+#[allow(dead_code)]
 impl CrdtDocument {
     pub fn new(path: PathBuf, initial_content: &str) -> Self {
         let mut doc = AutoCommit::new();
@@ -35,7 +37,9 @@ impl CrdtDocument {
         *lamport += 1;
 
         match &op.op_type {
-            OperationType::Insert { position, content, .. } => {
+            OperationType::Insert {
+                position, content, ..
+            } => {
                 let mut rope = self.rope.write();
                 let char_idx = self.line_col_to_char(&rope, position.line, position.column);
                 rope.insert(char_idx, content);
@@ -65,7 +69,11 @@ impl CrdtDocument {
                 }
             }
 
-            OperationType::Replace { position, old_content, new_content } => {
+            OperationType::Replace {
+                position,
+                old_content,
+                new_content,
+            } => {
                 let mut rope = self.rope.write();
                 let char_idx = self.line_col_to_char(&rope, position.line, position.column);
                 rope.remove(char_idx..char_idx + old_content.len());
@@ -104,7 +112,7 @@ impl CrdtDocument {
     }
 
     /// Get the current position from a stable anchor
-    pub fn resolve_anchor(&self, stable_id: &str) -> Option<(usize, usize)> {
+    pub fn resolve_anchor(&self, _stable_id: &str) -> Option<(usize, usize)> {
         // This would use the CRDT's operation history to resolve
         // the current position of an anchor
         // For now, simplified implementation

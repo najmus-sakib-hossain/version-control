@@ -1,21 +1,21 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 
-mod crdt;
-mod storage;
 mod context;
-mod watcher;
-mod sync;
+mod crdt;
 mod server;
+mod storage;
+mod sync;
+mod watcher;
 
 #[derive(Parser)]
 #[command(name = "forge")]
 #[command(about = "Operation-level version control with CRDT", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -111,19 +111,40 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            Cli::command().print_help()?;
+            println!();
+            return Ok(());
+        }
+    };
+
+    match command {
         Commands::Init { path } => {
-            println!("{}", "🚀 Initializing Forge DeltaDB repository...".cyan().bold());
+            println!(
+                "{}",
+                "🚀 Initializing Forge DeltaDB repository...".cyan().bold()
+            );
             storage::init(&path).await?;
             println!("{}", "✓ Repository initialized successfully!".green());
             println!("\n{}", "Next steps:".yellow());
-            println!("  1. {} - Start tracking operations", "forge watch".bright_white());
+            println!(
+                "  1. {} - Start tracking operations",
+                "forge watch".bright_white()
+            );
             println!("  2. {} - View operation log", "forge log".bright_white());
-            println!("  3. {} - Add context to code", "forge annotate <file> <line> -m \"message\"".bright_white());
+            println!(
+                "  3. {} - Add context to code",
+                "forge annotate <file> <line> -m \"message\"".bright_white()
+            );
         }
 
         Commands::Watch { path, sync, peer } => {
-            println!("{}", "👁  Starting operation-level tracking...".cyan().bold());
+            println!(
+                "{}",
+                "👁  Starting operation-level tracking...".cyan().bold()
+            );
             watcher::watch(path, sync, peer).await?;
         }
 
@@ -131,13 +152,27 @@ async fn main() -> Result<()> {
             storage::show_log(file, limit.unwrap_or(50)).await?;
         }
 
-        Commands::Anchor { file, line, column, message } => {
-            let anchor_id = context::create_anchor(&file, line, column, message).await?;
-            println!("{} Created anchor: {}", "✓".green(), anchor_id.to_string().bright_yellow());
-            println!("  Permalink: {}", format!("forge://{}#L{}:C{}", file.display(), line, column).bright_blue());
+        Commands::Anchor {
+            file,
+            line,
+            column,
+            message,
+        } => {
+            let anchor = context::create_anchor(&file, line, column, message).await?;
+            println!(
+                "{} Created anchor: {}",
+                "✓".green(),
+                anchor.id.to_string().bright_yellow()
+            );
+            println!("  Permalink: {}", anchor.permalink().bright_blue());
         }
 
-        Commands::Annotate { file, line, message, ai } => {
+        Commands::Annotate {
+            file,
+            line,
+            message,
+            ai,
+        } => {
             context::annotate(&file, line, &message, ai).await?;
             println!("{} Annotation added", "✓".green());
         }
@@ -165,7 +200,12 @@ async fn main() -> Result<()> {
         }
 
         Commands::Serve { port, path } => {
-            println!("{}", format!("🌐 Starting server on port {}...", port).cyan().bold());
+            println!(
+                "{}",
+                format!("🌐 Starting server on port {}...", port)
+                    .cyan()
+                    .bold()
+            );
             server::start(port, path).await?;
         }
 

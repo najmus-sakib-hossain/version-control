@@ -1,11 +1,10 @@
 use anyhow::Result;
+use parking_lot::Mutex;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::crdt::{Operation, Anchor};
-use crate::context::Annotation;
+use crate::crdt::{Anchor, Operation};
 
 pub struct Database {
     pub conn: Arc<Mutex<Connection>>,
@@ -90,13 +89,13 @@ impl Database {
         Ok(())
     }
 
-    pub fn store_operation(&self, op: &Operation) -> Result<()> {
+    pub fn store_operation(&self, op: &Operation) -> Result<bool> {
         let conn = self.conn.lock();
         let op_data = bincode::serialize(&op.op_type)?;
         let parent_ops = serde_json::to_string(&op.parent_ops)?;
 
         conn.execute(
-            "INSERT INTO operations (id, timestamp, actor_id, file_path, op_type, op_data, parent_ops)
+            "INSERT OR IGNORE INTO operations (id, timestamp, actor_id, file_path, op_type, op_data, parent_ops)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 op.id.to_string(),
@@ -107,9 +106,9 @@ impl Database {
                 op_data,
                 parent_ops,
             ],
-        )?;
-
-        Ok(())
+        )
+        .map(|changes| changes > 0)
+        .map_err(Into::into)
     }
 
     pub fn get_operations(&self, file: Option<&Path>, limit: usize) -> Result<Vec<Operation>> {
@@ -149,7 +148,9 @@ impl Database {
 
             Ok(Operation {
                 id: uuid::Uuid::parse_str(&id).unwrap(),
-                timestamp: chrono::DateTime::parse_from_rfc3339(&timestamp).unwrap().into(),
+                timestamp: chrono::DateTime::parse_from_rfc3339(&timestamp)
+                    .unwrap()
+                    .into(),
                 actor_id,
                 file_path,
                 op_type,

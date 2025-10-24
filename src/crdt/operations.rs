@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
@@ -63,7 +63,10 @@ impl Position {
 
     /// Create a stable identifier that survives code transformations
     pub fn stable_id(&self) -> String {
-        format!("{}:{}:{}", self.actor_id, self.lamport_timestamp, self.offset)
+        format!(
+            "{}:{}:{}",
+            self.actor_id, self.lamport_timestamp, self.offset
+        )
     }
 }
 
@@ -82,5 +85,14 @@ impl Operation {
     pub fn with_parents(mut self, parents: Vec<Uuid>) -> Self {
         self.parent_ops = parents;
         self
+    }
+
+    pub fn lamport(&self) -> Option<u64> {
+        match &self.op_type {
+            OperationType::Insert { position, .. }
+            | OperationType::Delete { position, .. }
+            | OperationType::Replace { position, .. } => Some(position.lamport_timestamp),
+            _ => None,
+        }
     }
 }

@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 use super::operations::Position;
 
@@ -31,13 +31,10 @@ impl Anchor {
     }
 
     pub fn permalink(&self) -> String {
-        format!(
-            "forge://{}#{}",
-            self.file_path,
-            self.stable_id
-        )
+        format!("forge://{}#{}", self.file_path, self.stable_id)
     }
 
+    #[allow(dead_code)]
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
         self

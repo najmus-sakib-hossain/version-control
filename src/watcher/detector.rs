@@ -1,22 +1,24 @@
 use anyhow::Result;
-use notify::{Event, EventKind, RecursiveMode, Watcher};
+use colored::*;
+use crossbeam::channel::bounded;
+use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::new_debouncer;
 use std::path::PathBuf;
-use std::time::Duration;
-use crossbeam::channel::bounded;
-use colored::*;
 use std::sync::Arc;
+use std::time::Duration;
 
-use crate::storage::OperationLog;
 use crate::crdt::{Operation, OperationType, Position};
-use crate::sync::SyncManager;
-use std::sync::Arc as StdArc;
+use crate::storage::OperationLog;
+use crate::sync::{GLOBAL_CLOCK, SyncManager};
 use similar::TextDiff;
+use std::sync::Arc as StdArc;
+use uuid::Uuid;
 
 pub async fn start_watching(
     path: PathBuf,
     oplog: Arc<OperationLog>,
     actor_id: String,
+    repo_id: String,
     sync_mgr: Option<StdArc<SyncManager>>,
 ) -> Result<()> {
     let (tx, rx) = bounded::<notify::Event>(10000);
@@ -36,6 +38,7 @@ pub async fn start_watching(
     debouncer.watch(&path, RecursiveMode::Recursive)?;
 
     println!("{}", "👁  Watching for operations...".bright_cyan().bold());
+    println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
 
     while let Ok(event) = rx.recv() {
         let start = std::time::Instant::now();
@@ -47,11 +50,12 @@ pub async fn start_watching(
                         if let Ok(ops) = detect_operations(path, &actor_id).await {
                             let elapsed = start.elapsed().as_micros();
                             for op in ops.iter() {
-                                oplog.append(op.clone()).await?;
-                                if let Some(mgr) = &sync_mgr {
-                                    let _ = mgr.publish(StdArc::new(op.clone()));
+                                if oplog.append(op.clone()).await? {
+                                    if let Some(mgr) = &sync_mgr {
+                                        let _ = mgr.publish(StdArc::new(op.clone()));
+                                    }
+                                    print_operation(op, elapsed);
                                 }
-                                print_operation(op, elapsed);
                             }
                         }
                     }
@@ -61,40 +65,38 @@ pub async fn start_watching(
                 for path in &event.paths {
                     if should_track(path) && path.is_file() {
                         let content = tokio::fs::read_to_string(path).await.unwrap_or_default();
-                        let op = Operation::new(
+                        let op = register_operation(Operation::new(
                             path.display().to_string(),
                             OperationType::FileCreate { content },
                             actor_id.clone(),
-                        );
+                        ));
 
-                        oplog.append(op.clone()).await?;
-
-                        if let Some(mgr) = &sync_mgr {
-                            let _ = mgr.publish(StdArc::new(op.clone()));
+                        if oplog.append(op.clone()).await? {
+                            if let Some(mgr) = &sync_mgr {
+                                let _ = mgr.publish(StdArc::new(op.clone()));
+                            }
+                            let elapsed = start.elapsed().as_micros();
+                            print_operation(&op, elapsed);
                         }
-
-                        let elapsed = start.elapsed().as_micros();
-                        print_operation(&op, elapsed);
                     }
                 }
             }
             EventKind::Remove(_) => {
                 for path in &event.paths {
                     if should_track(path) {
-                        let op = Operation::new(
+                        let op = register_operation(Operation::new(
                             path.display().to_string(),
                             OperationType::FileDelete,
                             actor_id.clone(),
-                        );
+                        ));
 
-                        oplog.append(op.clone()).await?;
-
-                        if let Some(mgr) = &sync_mgr {
-                            let _ = mgr.publish(StdArc::new(op.clone()));
+                        if oplog.append(op.clone()).await? {
+                            if let Some(mgr) = &sync_mgr {
+                                let _ = mgr.publish(StdArc::new(op.clone()));
+                            }
+                            let elapsed = start.elapsed().as_micros();
+                            print_operation(&op, elapsed);
                         }
-
-                        let elapsed = start.elapsed().as_micros();
-                        print_operation(&op, elapsed);
                     }
                 }
             }
@@ -105,12 +107,11 @@ pub async fn start_watching(
     Ok(())
 }
 
-use once_cell::sync::Lazy;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use once_cell::sync::Lazy;
 
 static PREV_CONTENT: Lazy<DashMap<PathBuf, String>> = Lazy::new(|| DashMap::new());
-static LAMPORT: AtomicU64 = AtomicU64::new(1);
+static LAST_OPERATION: Lazy<DashMap<String, Uuid>> = Lazy::new(|| DashMap::new());
 
 async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Vec<Operation>> {
     let new_content = tokio::fs::read_to_string(path).await.unwrap_or_default();
@@ -120,11 +121,14 @@ async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Vec<Operati
     // If no previous content, treat as create
     if prev_opt.is_none() {
         PREV_CONTENT.insert(key, new_content.clone());
-        return Ok(vec![Operation::new(
+        let op = Operation::new(
             path.display().to_string(),
-            OperationType::FileCreate { content: new_content },
+            OperationType::FileCreate {
+                content: new_content,
+            },
             actor_id.to_string(),
-        )]);
+        );
+        return Ok(vec![register_operation(op)]);
     }
 
     let old_content = prev_opt.unwrap();
@@ -147,38 +151,53 @@ async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Vec<Operati
             DiffOp::Insert { new_len, .. } => {
                 let inserted: String = new_content.chars().skip(new_idx).take(*new_len).collect();
                 let (line, col) = offset_to_line_col(&new_content, new_idx);
-                let lamport = LAMPORT.fetch_add(1, Ordering::Relaxed);
+                let lamport = GLOBAL_CLOCK.tick();
                 let pos = Position::new(line, col, new_idx, actor_id.to_string(), lamport);
-                ops.push(Operation::new(
+                let op = Operation::new(
                     path.display().to_string(),
-                    OperationType::Insert { position: pos, content: inserted, length: *new_len },
+                    OperationType::Insert {
+                        position: pos,
+                        content: inserted,
+                        length: *new_len,
+                    },
                     actor_id.to_string(),
-                ));
+                );
+                ops.push(register_operation(op));
                 new_idx += *new_len;
             }
             DiffOp::Delete { old_len, .. } => {
-                let deleted: String = old_content.chars().skip(old_idx).take(*old_len).collect();
                 let (line, col) = offset_to_line_col(&old_content, old_idx);
-                let lamport = LAMPORT.fetch_add(1, Ordering::Relaxed);
+                let lamport = GLOBAL_CLOCK.tick();
                 let pos = Position::new(line, col, old_idx, actor_id.to_string(), lamport);
-                ops.push(Operation::new(
+                let op = Operation::new(
                     path.display().to_string(),
-                    OperationType::Delete { position: pos, length: *old_len },
+                    OperationType::Delete {
+                        position: pos,
+                        length: *old_len,
+                    },
                     actor_id.to_string(),
-                ));
+                );
+                ops.push(register_operation(op));
                 old_idx += *old_len;
             }
-            DiffOp::Replace { old_len, new_len, .. } => {
+            DiffOp::Replace {
+                old_len, new_len, ..
+            } => {
                 let deleted: String = old_content.chars().skip(old_idx).take(*old_len).collect();
                 let inserted: String = new_content.chars().skip(new_idx).take(*new_len).collect();
                 let (line, col) = offset_to_line_col(&old_content, old_idx);
-                let lamport = LAMPORT.fetch_add(1, Ordering::Relaxed);
+                let lamport = GLOBAL_CLOCK.tick();
                 let pos = Position::new(line, col, old_idx, actor_id.to_string(), lamport);
-                ops.push(Operation::new(
+                let op = Operation::new(
                     path.display().to_string(),
-                    OperationType::Replace { position: pos, old_content: deleted, new_content: inserted },
+                    OperationType::Replace {
+                        position: pos,
+                        old_content: deleted,
+                        new_content: inserted,
+                    },
                     actor_id.to_string(),
-                ));
+                );
+                ops.push(register_operation(op));
                 old_idx += *old_len;
                 new_idx += *new_len;
             }
@@ -193,8 +212,15 @@ fn offset_to_line_col(s: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
     for (i, ch) in s.chars().enumerate() {
-        if i == offset { break; }
-        if ch == '\n' { line += 1; col = 1; } else { col += 1; }
+        if i == offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
     }
     (line, col)
 }
@@ -218,18 +244,22 @@ fn print_operation(op: &Operation, micros: u128) {
     };
 
     let (action, details) = match &op.op_type {
-        OperationType::Insert { length, .. } =>
-            ("INSERT".green(), format!("+{} chars", length)),
-        OperationType::Delete { length, .. } =>
-            ("DELETE".red(), format!("-{} chars", length)),
-        OperationType::Replace { old_content, new_content, .. } =>
-            ("REPLACE".yellow(), format!("{}→{} chars", old_content.len(), new_content.len())),
-        OperationType::FileCreate { .. } =>
-            ("CREATE".bright_green(), "file".to_string()),
-        OperationType::FileDelete =>
-            ("DELETE".bright_red(), "file".to_string()),
-        OperationType::FileRename { old_path, new_path } =>
-            ("RENAME".bright_yellow(), format!("{} → {}", old_path, new_path)),
+        OperationType::Insert { length, .. } => ("INSERT".green(), format!("+{} chars", length)),
+        OperationType::Delete { length, .. } => ("DELETE".red(), format!("-{} chars", length)),
+        OperationType::Replace {
+            old_content,
+            new_content,
+            ..
+        } => (
+            "REPLACE".yellow(),
+            format!("{}→{} chars", old_content.len(), new_content.len()),
+        ),
+        OperationType::FileCreate { .. } => ("CREATE".bright_green(), "file".to_string()),
+        OperationType::FileDelete => ("DELETE".bright_red(), "file".to_string()),
+        OperationType::FileRename { old_path, new_path } => (
+            "RENAME".bright_yellow(),
+            format!("{} → {}", old_path, new_path),
+        ),
     };
 
     println!(
@@ -240,4 +270,15 @@ fn print_operation(op: &Operation, micros: u128) {
         details.bright_black(),
         format!("({})", op.id).bright_black()
     );
+}
+
+fn register_operation(op: Operation) -> Operation {
+    let file_path = op.file_path.clone();
+    let op = if let Some(prev) = LAST_OPERATION.get(&file_path) {
+        op.with_parents(vec![*prev])
+    } else {
+        op
+    };
+    LAST_OPERATION.insert(file_path, op.id);
+    op
 }

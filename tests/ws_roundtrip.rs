@@ -17,7 +17,9 @@ async fn ws_roundtrip() {
 
     // Connect WS
     let url = format!("ws://127.0.0.1:{}/ws", port);
-    let (ws, _) = tokio_tungstenite::connect_async(url).await.expect("ws connect");
+    let (ws, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("ws connect");
     let (mut write, mut read) = ws.split();
 
     // Send an operation
@@ -33,7 +35,8 @@ async fn ws_roundtrip() {
     let op_id = op.id;
     let text = serde_json::to_string(&op).unwrap();
     use futures::SinkExt;
-    write.send(tokio_tungstenite::tungstenite::Message::Text(text.into()))
+    write
+        .send(tokio_tungstenite::tungstenite::Message::Text(text.into()))
         .await
         .unwrap();
 
@@ -42,11 +45,16 @@ async fn ws_roundtrip() {
     let mut got_back = false;
     let start = std::time::Instant::now();
     while let Some(msg) = read.next().await {
-        if start.elapsed() > Duration::from_secs(3) { break; }
+        if start.elapsed() > Duration::from_secs(3) {
+            break;
+        }
         if let Ok(tokio_tungstenite::tungstenite::Message::Text(t)) = msg {
             let s = t.to_string();
             if let Ok(o) = serde_json::from_str::<Operation>(&s) {
-                if o.id == op_id { got_back = true; break; }
+                if o.id == op_id {
+                    got_back = true;
+                    break;
+                }
             }
         }
     }

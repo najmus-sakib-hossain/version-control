@@ -50,6 +50,12 @@ serde_cbor = "0.11.2"
 ropey = "1.6.1"
 similar = { version = "2.7.0", features = ["inline"] }
 
+# HTTP client for initial sync fetches
+reqwest = { version = "0.12.8", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
 # Tree-sitter for code analysis
 tree-sitter = "0.24.7"
 tree-sitter-rust = "0.24.0"

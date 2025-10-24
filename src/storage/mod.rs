@@ -1,10 +1,10 @@
 pub mod db;
-pub mod oplog;
 pub mod git_interop;
+pub mod oplog;
 
 use anyhow::Result;
-use std::path::Path;
 use colored::*;
+use std::path::Path;
 
 pub use db::Database;
 pub use oplog::OperationLog;
@@ -28,14 +28,16 @@ pub async fn init(path: &Path) -> Result<()> {
     let config = serde_json::json!({
         "version": "0.1.0",
         "actor_id": uuid::Uuid::new_v4().to_string(),
+        "repo_id": uuid::Uuid::new_v4().to_string(),
         "git_interop": true,
         "real_time_sync": false,
     });
 
     tokio::fs::write(
         forge_path.join("config.json"),
-        serde_json::to_string_pretty(&config)?
-    ).await?;
+        serde_json::to_string_pretty(&config)?,
+    )
+    .await?;
 
     Ok(())
 }
@@ -50,18 +52,20 @@ pub async fn show_log(file: Option<std::path::PathBuf>, limit: usize) -> Result<
     for op in operations {
         let time = op.timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
         let op_type = match &op.op_type {
-            crate::crdt::OperationType::Insert { length, .. } =>
-                format!("+{} chars", length).green(),
-            crate::crdt::OperationType::Delete { length, .. } =>
-                format!("-{} chars", length).red(),
-            crate::crdt::OperationType::Replace { old_content, new_content, .. } =>
-                format!("~{}->{} chars", old_content.len(), new_content.len()).yellow(),
-            crate::crdt::OperationType::FileCreate { .. } =>
-                "FILE_CREATE".bright_green(),
-            crate::crdt::OperationType::FileDelete =>
-                "FILE_DELETE".bright_red(),
-            crate::crdt::OperationType::FileRename { old_path, new_path } =>
-                format!("RENAME {} -> {}", old_path, new_path).bright_yellow(),
+            crate::crdt::OperationType::Insert { length, .. } => {
+                format!("+{} chars", length).green()
+            }
+            crate::crdt::OperationType::Delete { length, .. } => format!("-{} chars", length).red(),
+            crate::crdt::OperationType::Replace {
+                old_content,
+                new_content,
+                ..
+            } => format!("~{}->{} chars", old_content.len(), new_content.len()).yellow(),
+            crate::crdt::OperationType::FileCreate { .. } => "FILE_CREATE".bright_green(),
+            crate::crdt::OperationType::FileDelete => "FILE_DELETE".bright_red(),
+            crate::crdt::OperationType::FileRename { old_path, new_path } => {
+                format!("RENAME {} -> {}", old_path, new_path).bright_yellow()
+            }
         };
 
         println!(
@@ -81,7 +85,12 @@ pub async fn git_sync(path: &Path) -> Result<()> {
 }
 
 pub async fn time_travel(file: &Path, timestamp: Option<String>) -> Result<()> {
-    println!("{}", format!("🕐 Time traveling: {}", file.display()).cyan().bold());
+    println!(
+        "{}",
+        format!("🕐 Time traveling: {}", file.display())
+            .cyan()
+            .bold()
+    );
 
     let db = Database::open(".dx/forge")?;
     let operations = db.get_operations(Some(file), 1000)?;

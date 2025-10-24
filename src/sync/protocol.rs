@@ -26,7 +26,10 @@ impl SyncManager {
 
     /// Publish an operation to all subscribers. Returns Err if there are
     /// no subscribers or the buffer is full.
-    pub fn publish(&self, op: Arc<Operation>) -> Result<usize, broadcast::error::SendError<Arc<Operation>>> {
+    pub fn publish(
+        &self,
+        op: Arc<Operation>,
+    ) -> Result<usize, broadcast::error::SendError<Arc<Operation>>> {
         self.tx.send(op)
     }
 }
@@ -40,7 +43,13 @@ mod tests {
         let mgr = SyncManager::new();
         let mut rx = mgr.subscribe();
 
-        let op = Arc::new(Operation::new("/tmp/x".to_string(), crate::crdt::OperationType::FileCreate { content: "a".into() }, "actor".into()));
+        let op = Arc::new(Operation::new(
+            "/tmp/x".to_string(),
+            crate::crdt::OperationType::FileCreate {
+                content: "a".into(),
+            },
+            "actor".into(),
+        ));
         mgr.publish(op.clone()).unwrap();
 
         let got = rx.recv().await.unwrap();
