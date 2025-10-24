@@ -9,12 +9,15 @@ use std::sync::Arc;
 
 use crate::storage::OperationLog;
 use crate::crdt::{Operation, OperationType, Position};
+use crate::sync::SyncManager;
+use std::sync::Arc as StdArc;
 use similar::TextDiff;
 
 pub async fn start_watching(
     path: PathBuf,
     oplog: Arc<OperationLog>,
     actor_id: String,
+    sync_mgr: Option<StdArc<SyncManager>>,
 ) -> Result<()> {
     let (tx, rx) = bounded::<notify::Event>(10000);
 
@@ -41,11 +44,15 @@ pub async fn start_watching(
             EventKind::Modify(_) => {
                 for path in &event.paths {
                     if should_track(path) {
-                        if let Ok(op) = detect_operations(path, &actor_id).await {
-                            oplog.append(op.clone()).await?;
-
+                        if let Ok(ops) = detect_operations(path, &actor_id).await {
                             let elapsed = start.elapsed().as_micros();
-                            print_operation(&op, elapsed);
+                            for op in ops.iter() {
+                                oplog.append(op.clone()).await?;
+                                if let Some(mgr) = &sync_mgr {
+                                    let _ = mgr.publish(StdArc::new(op.clone()));
+                                }
+                                print_operation(op, elapsed);
+                            }
                         }
                     }
                 }
@@ -61,6 +68,10 @@ pub async fn start_watching(
                         );
 
                         oplog.append(op.clone()).await?;
+
+                        if let Some(mgr) = &sync_mgr {
+                            let _ = mgr.publish(StdArc::new(op.clone()));
+                        }
 
                         let elapsed = start.elapsed().as_micros();
                         print_operation(&op, elapsed);
@@ -78,6 +89,10 @@ pub async fn start_watching(
 
                         oplog.append(op.clone()).await?;
 
+                        if let Some(mgr) = &sync_mgr {
+                            let _ = mgr.publish(StdArc::new(op.clone()));
+                        }
+
                         let elapsed = start.elapsed().as_micros();
                         print_operation(&op, elapsed);
                     }
@@ -90,19 +105,98 @@ pub async fn start_watching(
     Ok(())
 }
 
-async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Operation> {
-    // Read current content
-    let new_content = tokio::fs::read_to_string(path).await?;
+use once_cell::sync::Lazy;
+use dashmap::DashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-    // For simplicity, treat as full file update
-    // In production, would do character-level diffing
-    let op = Operation::new(
-        path.display().to_string(),
-        OperationType::FileCreate { content: new_content },
-        actor_id.to_string(),
-    );
+static PREV_CONTENT: Lazy<DashMap<PathBuf, String>> = Lazy::new(|| DashMap::new());
+static LAMPORT: AtomicU64 = AtomicU64::new(1);
 
-    Ok(op)
+async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Vec<Operation>> {
+    let new_content = tokio::fs::read_to_string(path).await.unwrap_or_default();
+    let key = path.clone();
+    let prev_opt = PREV_CONTENT.get(&key).map(|r| r.clone());
+
+    // If no previous content, treat as create
+    if prev_opt.is_none() {
+        PREV_CONTENT.insert(key, new_content.clone());
+        return Ok(vec![Operation::new(
+            path.display().to_string(),
+            OperationType::FileCreate { content: new_content },
+            actor_id.to_string(),
+        )]);
+    }
+
+    let old_content = prev_opt.unwrap();
+
+    let diff = TextDiff::from_chars(&old_content, &new_content);
+
+    // Cursor to compute line/col and offsets
+    let mut old_idx: usize = 0;
+    let mut new_idx: usize = 0;
+    let mut ops: Vec<Operation> = Vec::new();
+
+    for change in diff.ops() {
+        use similar::DiffOp;
+        match change {
+            DiffOp::Equal { len, .. } => {
+                // advance both cursors
+                old_idx += len;
+                new_idx += len;
+            }
+            DiffOp::Insert { new_len, .. } => {
+                let inserted: String = new_content.chars().skip(new_idx).take(*new_len).collect();
+                let (line, col) = offset_to_line_col(&new_content, new_idx);
+                let lamport = LAMPORT.fetch_add(1, Ordering::Relaxed);
+                let pos = Position::new(line, col, new_idx, actor_id.to_string(), lamport);
+                ops.push(Operation::new(
+                    path.display().to_string(),
+                    OperationType::Insert { position: pos, content: inserted, length: *new_len },
+                    actor_id.to_string(),
+                ));
+                new_idx += *new_len;
+            }
+            DiffOp::Delete { old_len, .. } => {
+                let deleted: String = old_content.chars().skip(old_idx).take(*old_len).collect();
+                let (line, col) = offset_to_line_col(&old_content, old_idx);
+                let lamport = LAMPORT.fetch_add(1, Ordering::Relaxed);
+                let pos = Position::new(line, col, old_idx, actor_id.to_string(), lamport);
+                ops.push(Operation::new(
+                    path.display().to_string(),
+                    OperationType::Delete { position: pos, length: *old_len },
+                    actor_id.to_string(),
+                ));
+                old_idx += *old_len;
+            }
+            DiffOp::Replace { old_len, new_len, .. } => {
+                let deleted: String = old_content.chars().skip(old_idx).take(*old_len).collect();
+                let inserted: String = new_content.chars().skip(new_idx).take(*new_len).collect();
+                let (line, col) = offset_to_line_col(&old_content, old_idx);
+                let lamport = LAMPORT.fetch_add(1, Ordering::Relaxed);
+                let pos = Position::new(line, col, old_idx, actor_id.to_string(), lamport);
+                ops.push(Operation::new(
+                    path.display().to_string(),
+                    OperationType::Replace { position: pos, old_content: deleted, new_content: inserted },
+                    actor_id.to_string(),
+                ));
+                old_idx += *old_len;
+                new_idx += *new_len;
+            }
+        }
+    }
+
+    PREV_CONTENT.insert(key, new_content);
+    Ok(ops)
+}
+
+fn offset_to_line_col(s: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    for (i, ch) in s.chars().enumerate() {
+        if i == offset { break; }
+        if ch == '\n' { line += 1; col = 1; } else { col += 1; }
+    }
+    (line, col)
 }
 
 fn should_track(path: &PathBuf) -> bool {

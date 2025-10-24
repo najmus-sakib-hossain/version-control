@@ -60,9 +60,14 @@ walkdir = "2.5.0"
 ignore = "0.4.24"
 
 # Networking (for future sync)
-axum = "0.8.1"
+axum = { version = "0.8.1", features = ["ws"] }
 tower = { version = "0.5.2", features = ["full"] }
 tower-http = { version = "0.6.2", features = ["full"] }
+
+# WebSocket client
+tokio-tungstenite = "0.28.0"
+futures = "0.3.31"
+url = "2.5.4"
 
 # Performance
 memmap2 = "0.9.9"

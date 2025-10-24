@@ -34,6 +34,10 @@ enum Commands {
         /// Enable real-time sync
         #[arg(long)]
         sync: bool,
+
+        /// WebSocket peer(s) to connect, e.g. ws://localhost:3000/ws
+        #[arg(long, value_name = "URL")]
+        peer: Vec<String>,
     },
 
     /// Query the operation log
@@ -81,6 +85,10 @@ enum Commands {
         path: PathBuf,
     },
 
+    /// Any unrecognized subcommand will be passed to the system `git`.
+    #[command(external_subcommand)]
+    GitPassthrough(Vec<String>),
+
     /// Start collaborative server
     Serve {
         #[arg(short, long, default_value = "3000")]
@@ -114,9 +122,9 @@ async fn main() -> Result<()> {
             println!("  3. {} - Add context to code", "forge annotate <file> <line> -m \"message\"".bright_white());
         }
 
-        Commands::Watch { path, sync } => {
+        Commands::Watch { path, sync, peer } => {
             println!("{}", "👁  Starting operation-level tracking...".cyan().bold());
-            watcher::watch(path, sync).await?;
+            watcher::watch(path, sync, peer).await?;
         }
 
         Commands::Log { file, limit } => {
@@ -142,6 +150,18 @@ async fn main() -> Result<()> {
             println!("{}", "🔄 Syncing with Git...".cyan().bold());
             storage::git_sync(&path).await?;
             println!("{}", "✓ Sync complete".green());
+        }
+
+        Commands::GitPassthrough(args) => {
+            use tokio::process::Command;
+            let status = if args.is_empty() {
+                Command::new("git").status().await?
+            } else {
+                Command::new("git").args(args).status().await?
+            };
+            if !status.success() {
+                eprintln!("git exited with status: {}", status);
+            }
         }
 
         Commands::Serve { port, path } => {
