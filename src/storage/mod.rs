@@ -4,6 +4,7 @@ pub mod oplog;
 
 use anyhow::Result;
 use colored::*;
+use ropey::Rope;
 use std::path::Path;
 
 pub use db::Database;
@@ -92,8 +93,19 @@ pub async fn time_travel(file: &Path, timestamp: Option<String>) -> Result<()> {
             .bold()
     );
 
-    let db = Database::open(".dx/forge")?;
-    let operations = db.get_operations(Some(file), 1000)?;
+    let repo_root = std::env::current_dir()?;
+    let forge_path = repo_root.join(FORGE_DIR);
+    let db = Database::new(&forge_path)?;
+    db.initialize()?;
+
+    let target_path = if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        repo_root.join(file)
+    };
+    let target_canon = normalize_path(&target_path);
+
+    let mut operations = db.get_operations(None, 2000)?;
 
     // Reconstruct file state at timestamp
     let target_time = if let Some(ts) = timestamp {
@@ -102,22 +114,66 @@ pub async fn time_travel(file: &Path, timestamp: Option<String>) -> Result<()> {
         chrono::Utc::now()
     };
 
-    let mut content = String::new();
+    operations.retain(|op| {
+        op.timestamp <= target_time
+            && normalize_path(std::path::Path::new(&op.file_path)) == target_canon
+    });
+    operations.sort_by_key(|op| op.timestamp);
 
-    for op in operations.iter().filter(|o| o.timestamp <= target_time) {
-        // Apply operations chronologically
+    let mut rope = Rope::new();
+
+    for op in operations.iter() {
         match &op.op_type {
             crate::crdt::OperationType::FileCreate { content: c } => {
-                content = c.clone();
+                rope = Rope::from_str(c);
             }
-            // ... other operations
-            _ => {}
+            crate::crdt::OperationType::Insert {
+                position, content, ..
+            } => {
+                let char_idx = clamp_offset(&rope, position.offset);
+                rope.insert(char_idx, content);
+            }
+            crate::crdt::OperationType::Delete { position, length } => {
+                let start = clamp_offset(&rope, position.offset);
+                let end = clamp_offset(&rope, start + *length);
+                if start < end {
+                    rope.remove(start..end);
+                }
+            }
+            crate::crdt::OperationType::Replace {
+                position,
+                old_content,
+                new_content,
+            } => {
+                let start = clamp_offset(&rope, position.offset);
+                let end = clamp_offset(&rope, start + old_content.chars().count());
+                if start < end {
+                    rope.remove(start..end);
+                }
+                rope.insert(start, new_content);
+            }
+            crate::crdt::OperationType::FileDelete => {
+                rope = Rope::new();
+            }
+            crate::crdt::OperationType::FileRename { .. } => {
+                // Rename events are handled by resolving the target path above.
+            }
         }
     }
+
+    let content = rope.to_string();
 
     println!("\n{}", "─".repeat(80).bright_black());
     println!("{}", content);
     println!("{}", "─".repeat(80).bright_black());
 
     Ok(())
+}
+
+fn normalize_path(path: &Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn clamp_offset(rope: &Rope, offset: usize) -> usize {
+    offset.min(rope.len_chars())
 }

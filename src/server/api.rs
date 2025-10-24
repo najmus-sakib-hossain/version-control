@@ -143,38 +143,33 @@ async fn handle_ws(state: AppState, socket: WebSocket) {
                                 );
                             }
                             SyncMessage::Operation { operation: op } => {
-                                if op.actor_id != state_recv.actor_id
-                                    && state_recv.seen.insert(op.id)
-                                {
+                                if insert_seen(&state_recv.seen, op.id) {
                                     if let Some(lamport) = op.lamport() {
                                         GLOBAL_CLOCK.observe(lamport);
                                     }
-                                    if let Ok(true) = oplog.append(op.clone()).await {
-                                        let _ = state_recv.sync.publish(Arc::new(op));
-                                    }
+                                    let _ = oplog.append(op.clone()).await;
+                                    let _ = state_recv.sync.publish(Arc::new(op));
                                 }
                             }
                         }
                     } else if let Ok(op) = serde_json::from_str::<Operation>(&text) {
-                        if op.actor_id != state_recv.actor_id && state_recv.seen.insert(op.id) {
+                        if insert_seen(&state_recv.seen, op.id) {
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            if let Ok(true) = oplog.append(op.clone()).await {
-                                let _ = state_recv.sync.publish(Arc::new(op));
-                            }
+                            let _ = oplog.append(op.clone()).await;
+                            let _ = state_recv.sync.publish(Arc::new(op));
                         }
                     }
                 }
                 Ok(Message::Binary(bin)) => {
                     if let Ok(op) = serde_cbor::from_slice::<Operation>(&bin) {
-                        if op.actor_id != state_recv.actor_id && state_recv.seen.insert(op.id) {
+                        if insert_seen(&state_recv.seen, op.id) {
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            if let Ok(true) = oplog.append(op.clone()).await {
-                                let _ = state_recv.sync.publish(Arc::new(op));
-                            }
+                            let _ = oplog.append(op.clone()).await;
+                            let _ = state_recv.sync.publish(Arc::new(op));
                         }
                     }
                 }
@@ -208,5 +203,27 @@ async fn get_ops(
     match result {
         Ok(ops) => Ok(Json(ops)),
         Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+const SEEN_LIMIT: usize = 10_000;
+
+fn insert_seen(cache: &DashSet<Uuid>, id: Uuid) -> bool {
+    let inserted = cache.insert(id);
+    if inserted {
+        enforce_seen_limit(cache);
+    }
+    inserted
+}
+
+fn enforce_seen_limit(cache: &DashSet<Uuid>) {
+    while cache.len() > SEEN_LIMIT {
+        if let Some(entry) = cache.iter().next() {
+            let key = *entry.key();
+            drop(entry);
+            cache.remove(&key);
+        } else {
+            break;
+        }
     }
 }

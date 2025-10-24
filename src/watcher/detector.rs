@@ -3,9 +3,11 @@ use colored::*;
 use crossbeam::channel::bounded;
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::new_debouncer;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use once_cell::sync::Lazy;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use crate::crdt::{Operation, OperationType, Position};
 use crate::storage::OperationLog;
@@ -21,7 +23,12 @@ pub async fn start_watching(
     repo_id: String,
     sync_mgr: Option<StdArc<SyncManager>>,
 ) -> Result<()> {
-    let (tx, rx) = bounded::<notify::Event>(10000);
+    const QUEUE_CAPACITY: usize = 10_000;
+    const BACKLOG_WARN_THRESHOLD: usize = 8_000;
+
+    static BACKLOG_WARNED: AtomicBool = AtomicBool::new(false);
+
+    let (tx, rx) = bounded::<notify::Event>(QUEUE_CAPACITY);
 
     let mut debouncer = new_debouncer(
         Duration::from_millis(50),
@@ -29,7 +36,26 @@ pub async fn start_watching(
         move |result: Result<Vec<notify_debouncer_full::DebouncedEvent>, Vec<notify::Error>>| {
             if let Ok(events) = result {
                 for event in events {
-                    let _ = tx.send(event.event);
+                    let backlog = tx.len();
+                    if backlog > BACKLOG_WARN_THRESHOLD
+                        && !BACKLOG_WARNED.swap(true, Ordering::Relaxed)
+                    {
+                        println!(
+                            "{} Watcher backlog at {} events (capacity {})",
+                            "⚠️".bright_yellow(),
+                            backlog,
+                            QUEUE_CAPACITY
+                        );
+                    } else if backlog < BACKLOG_WARN_THRESHOLD / 2 {
+                        BACKLOG_WARNED.store(false, Ordering::Relaxed);
+                    }
+
+                    if tx.send(event.event).is_err() {
+                        println!(
+                            "{} Dropped filesystem event due to full queue",
+                            "⚠️".bright_red()
+                        );
+                    }
                 }
             }
         },
@@ -41,7 +67,7 @@ pub async fn start_watching(
     println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
 
     while let Ok(event) = rx.recv() {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
 
         match event.kind {
             EventKind::Modify(_) => {
@@ -55,6 +81,7 @@ pub async fn start_watching(
                                         let _ = mgr.publish(StdArc::new(op.clone()));
                                     }
                                     print_operation(op, elapsed);
+                                    record_throughput(elapsed);
                                 }
                             }
                         }
@@ -77,6 +104,7 @@ pub async fn start_watching(
                             }
                             let elapsed = start.elapsed().as_micros();
                             print_operation(&op, elapsed);
+                            record_throughput(elapsed);
                         }
                     }
                 }
@@ -96,6 +124,7 @@ pub async fn start_watching(
                             }
                             let elapsed = start.elapsed().as_micros();
                             print_operation(&op, elapsed);
+                            record_throughput(elapsed);
                         }
                     }
                 }
@@ -108,19 +137,61 @@ pub async fn start_watching(
 }
 
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 
 static PREV_CONTENT: Lazy<DashMap<PathBuf, String>> = Lazy::new(|| DashMap::new());
 static LAST_OPERATION: Lazy<DashMap<String, Uuid>> = Lazy::new(|| DashMap::new());
+static OPS_PROCESSED: AtomicU64 = AtomicU64::new(0);
+static LAST_THROUGHPUT_SNAPSHOT: Lazy<StdMutex<Instant>> =
+    Lazy::new(|| StdMutex::new(Instant::now()));
+
+const PREV_CONTENT_LIMIT: usize = 2_048;
+const MAX_TRACKED_FILE_BYTES: usize = 1_000_000; // ~1MB per file
+
+fn enforce_prev_content_limit() {
+    while PREV_CONTENT.len() > PREV_CONTENT_LIMIT {
+        if let Some(entry) = PREV_CONTENT.iter().next() {
+            let key = entry.key().clone();
+            drop(entry);
+            PREV_CONTENT.remove(&key);
+        } else {
+            break;
+        }
+    }
+}
+
+fn record_throughput(micros: u128) {
+    let total = OPS_PROCESSED.fetch_add(1, Ordering::Relaxed) + 1;
+    if total % 100 == 0 {
+        if let Ok(mut guard) = LAST_THROUGHPUT_SNAPSHOT.lock() {
+            let elapsed = guard.elapsed();
+            if elapsed >= Duration::from_secs(1) {
+                let ops_per_sec = 100.0 / elapsed.as_secs_f64().max(f64::EPSILON);
+                println!(
+                    "{} Processed {} ops in {:.2}s (~{:.1} ops/s, last op {}µs)",
+                    "📈".bright_blue(),
+                    total,
+                    elapsed.as_secs_f64(),
+                    ops_per_sec,
+                    micros
+                );
+                *guard = Instant::now();
+            }
+        }
+    }
+}
 
 async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Vec<Operation>> {
     let new_content = tokio::fs::read_to_string(path).await.unwrap_or_default();
+    if new_content.len() > MAX_TRACKED_FILE_BYTES {
+        return Ok(vec![]);
+    }
     let key = path.clone();
     let prev_opt = PREV_CONTENT.get(&key).map(|r| r.clone());
 
     // If no previous content, treat as create
     if prev_opt.is_none() {
         PREV_CONTENT.insert(key, new_content.clone());
+        enforce_prev_content_limit();
         let op = Operation::new(
             path.display().to_string(),
             OperationType::FileCreate {
@@ -205,6 +276,7 @@ async fn detect_operations(path: &PathBuf, actor_id: &str) -> Result<Vec<Operati
     }
 
     PREV_CONTENT.insert(key, new_content);
+    enforce_prev_content_limit();
     Ok(ops)
 }
 
@@ -226,11 +298,7 @@ fn offset_to_line_col(s: &str, offset: usize) -> (usize, usize) {
 }
 
 fn should_track(path: &PathBuf) -> bool {
-    let path_str = path.to_string_lossy();
-    !path_str.contains("/.git/")
-        && !path_str.contains("/.dx/")
-        && !path_str.contains("/target/")
-        && !path_str.contains("/node_modules/")
+    is_trackable(path)
 }
 
 fn print_operation(op: &Operation, micros: u128) {
@@ -281,4 +349,62 @@ fn register_operation(op: Operation) -> Operation {
     };
     LAST_OPERATION.insert(file_path, op.id);
     op
+}
+
+fn is_trackable(path: &Path) -> bool {
+    const IGNORED_COMPONENTS: [&str; 5] = [".git", ".dx", ".dx_client", "target", "node_modules"];
+
+    for component in path.components() {
+        if let Component::Normal(seg) = component {
+            if let Some(segment) = seg.to_str() {
+                let lower = segment.to_ascii_lowercase();
+                if IGNORED_COMPONENTS.iter().any(|needle| needle == &lower) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_trackable;
+    use std::path::Path;
+
+    #[test]
+    fn ignores_git_directory_unix_style() {
+        assert!(!is_trackable(Path::new("/repo/.git/config")));
+    }
+
+    #[test]
+    fn ignores_git_directory_windows_style() {
+        assert!(!is_trackable(Path::new("C:\\repo\\.git\\config")));
+    }
+
+    #[test]
+    fn ignores_target_directory() {
+        assert!(!is_trackable(Path::new("/repo/target/debug/app")));
+    }
+
+    #[test]
+    fn ignores_dx_directory() {
+        assert!(!is_trackable(Path::new("/repo/.dx/forge/forge.db")));
+    }
+
+    #[test]
+    fn ignores_dx_client_directory() {
+        assert!(!is_trackable(Path::new("/repo/.dx_client/forge/forge.db")));
+    }
+
+    #[test]
+    fn tracks_regular_source_file() {
+        assert!(is_trackable(Path::new("/repo/src/main.rs")));
+    }
+
+    #[test]
+    fn tracks_nested_source_file() {
+        assert!(is_trackable(Path::new("C:\\repo\\src\\lib.rs")));
+    }
 }

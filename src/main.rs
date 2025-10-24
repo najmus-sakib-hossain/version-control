@@ -12,7 +12,10 @@ mod watcher;
 
 #[derive(Parser)]
 #[command(name = "forge")]
-#[command(about = "Next-generation version control with operation-level tracking, CRDT-based sync, and seamless Git integration", version)]
+#[command(
+    about = "Next-generation version control with operation-level tracking, CRDT-based sync, and seamless Git integration",
+    version
+)]
 #[command(after_help = "Forge Features:
 - Operation-level version control with CRDT for conflict-free collaboration
 - Real-time sync between multiple peers via WebSocket

@@ -12,7 +12,6 @@ use crate::storage::OperationLog;
 use crate::sync::{GLOBAL_CLOCK, SyncMessage};
 use colored::*;
 use dashmap::DashSet;
-use once_cell::sync::Lazy;
 use reqwest::Client;
 use uuid::Uuid;
 
@@ -26,6 +25,7 @@ pub async fn connect_peer(
     sync: SyncManager,
     oplog: Arc<OperationLog>,
 ) -> Result<JoinHandle<()>> {
+    let seen = Arc::new(DashSet::new());
     let url = Url::parse(url).map_err(|e| anyhow!("invalid ws url: {e}"))?;
     let (ws_stream, _) = tokio_tungstenite::connect_async(url.as_str()).await?;
 
@@ -40,7 +40,7 @@ pub async fn connect_peer(
     if let Some(ops_url) = derive_ops_url(&url) {
         if let Ok(ops) = fetch_initial_ops(ops_url).await {
             for op in ops.into_iter().rev() {
-                if SEEN.insert(op.id) {
+                if insert_seen(&seen, op.id) {
                     if let Some(lamport) = op.lamport() {
                         GLOBAL_CLOCK.observe(lamport);
                     }
@@ -57,12 +57,13 @@ pub async fn connect_peer(
 
     // Spawn forwarder for local -> remote
     let actor_id_clone = actor_id.clone();
+    let seen_forward = seen.clone();
     let forward = tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(op_arc) => {
                     // Only forward our own actor's ops to reduce echo, server will broadcast
-                    if op_arc.actor_id == actor_id_clone && SEEN.insert(op_arc.id) {
+                    if op_arc.actor_id == actor_id_clone && insert_seen(&seen_forward, op_arc.id) {
                         if let Ok(json) =
                             serde_json::to_string(&SyncMessage::operation((*op_arc).clone()))
                         {
@@ -81,6 +82,7 @@ pub async fn connect_peer(
     let sync_clone = sync.clone();
     let actor_id_clone2 = actor_id.clone();
     let oplog_clone = oplog.clone();
+    let seen_recv = seen.clone();
     let recv = tokio::spawn(async move {
         while let Some(msg) = ws_rx.next().await {
             match msg {
@@ -97,36 +99,34 @@ pub async fn connect_peer(
                                 );
                             }
                             SyncMessage::Operation { operation: op } => {
-                                if op.actor_id != actor_id_clone2 && SEEN.insert(op.id) {
+                                if op.actor_id != actor_id_clone2 && insert_seen(&seen_recv, op.id)
+                                {
                                     if let Some(lamport) = op.lamport() {
                                         GLOBAL_CLOCK.observe(lamport);
                                     }
-                                    if let Ok(true) = oplog_clone.append(op.clone()).await {
-                                        let _ = sync_clone.publish(Arc::new(op));
-                                    }
+                                    let _ = oplog_clone.append(op.clone()).await;
+                                    let _ = sync_clone.publish(Arc::new(op));
                                 }
                             }
                         }
                     } else if let Ok(op) = serde_json::from_str::<Operation>(&text) {
-                        if op.actor_id != actor_id_clone2 && SEEN.insert(op.id) {
+                        if op.actor_id != actor_id_clone2 && insert_seen(&seen_recv, op.id) {
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            if let Ok(true) = oplog_clone.append(op.clone()).await {
-                                let _ = sync_clone.publish(Arc::new(op));
-                            }
+                            let _ = oplog_clone.append(op.clone()).await;
+                            let _ = sync_clone.publish(Arc::new(op));
                         }
                     }
                 }
                 Ok(Message::Binary(bin)) => {
                     if let Ok(op) = serde_cbor::from_slice::<Operation>(&bin) {
-                        if op.actor_id != actor_id_clone2 && SEEN.insert(op.id) {
+                        if op.actor_id != actor_id_clone2 && insert_seen(&seen_recv, op.id) {
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            if let Ok(true) = oplog_clone.append(op.clone()).await {
-                                let _ = sync_clone.publish(Arc::new(op));
-                            }
+                            let _ = oplog_clone.append(op.clone()).await;
+                            let _ = sync_clone.publish(Arc::new(op));
                         }
                     }
                 }
@@ -147,7 +147,27 @@ pub async fn connect_peer(
     Ok(handle)
 }
 
-static SEEN: Lazy<DashSet<Uuid>> = Lazy::new(|| DashSet::new());
+const SEEN_LIMIT: usize = 10_000;
+
+fn insert_seen(cache: &DashSet<Uuid>, id: Uuid) -> bool {
+    let inserted = cache.insert(id);
+    if inserted {
+        enforce_seen_limit(cache);
+    }
+    inserted
+}
+
+fn enforce_seen_limit(cache: &DashSet<Uuid>) {
+    while cache.len() > SEEN_LIMIT {
+        if let Some(entry) = cache.iter().next() {
+            let key = *entry.key();
+            drop(entry);
+            cache.remove(&key);
+        } else {
+            break;
+        }
+    }
+}
 
 fn derive_ops_url(ws_url: &Url) -> Option<Url> {
     let mut http = ws_url.clone();

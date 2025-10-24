@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -21,8 +21,12 @@ impl OperationLog {
     }
 
     pub async fn append(&self, operation: Operation) -> Result<bool> {
-        // Store in database
-        let inserted = self.db.store_operation(&operation)?;
+        let db = self.db.clone();
+        let op_for_db = operation.clone();
+
+        let inserted = tokio::task::spawn_blocking(move || db.store_operation(&op_for_db))
+            .await
+            .map_err(|err| anyhow!("failed to join database task: {err}"))??;
 
         if inserted {
             // Cache for fast access

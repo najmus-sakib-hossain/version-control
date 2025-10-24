@@ -12,11 +12,15 @@ use std::sync::Arc as StdArc;
 pub async fn watch(path: PathBuf, enable_sync: bool, peers: Vec<String>) -> Result<()> {
     println!("{}", "Initializing operation tracker...".bright_cyan());
 
-    let db = Database::open(".dx/forge")?;
+    let repo_root = path.canonicalize().unwrap_or_else(|_| path.clone());
+    let forge_dir = repo_root.join(".dx/forge");
+
+    let db = Database::new(&forge_dir)?;
+    db.initialize()?;
     let oplog = std::sync::Arc::new(OperationLog::new(std::sync::Arc::new(db)));
 
     // Load config
-    let config_raw = tokio::fs::read_to_string(".dx/forge/config.json").await?;
+    let config_raw = tokio::fs::read_to_string(forge_dir.join("config.json")).await?;
     let config: serde_json::Value = serde_json::from_str(&config_raw)?;
     let actor_id = config["actor_id"].as_str().unwrap().to_string();
     let repo_id = config["repo_id"]
@@ -24,7 +28,7 @@ pub async fn watch(path: PathBuf, enable_sync: bool, peers: Vec<String>) -> Resu
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
             let mut hasher = Sha256::new();
-            let path_string = path.to_string_lossy().into_owned();
+            let path_string = repo_root.to_string_lossy().into_owned();
             hasher.update(path_string.as_bytes());
             format!("local-{:x}", hasher.finalize())
         });
@@ -69,7 +73,7 @@ pub async fn watch(path: PathBuf, enable_sync: bool, peers: Vec<String>) -> Resu
         }
     }
 
-    detector::start_watching(path, oplog, actor_id, repo_id, sync_mgr).await?;
+    detector::start_watching(repo_root, oplog, actor_id, repo_id, sync_mgr).await?;
 
     Ok(())
 }

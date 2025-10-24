@@ -1,26 +1,16 @@
 use anyhow::Result;
 use colored::*;
-use git2::Repository;
 use std::path::Path;
 
-pub async fn sync_with_git(path: &Path) -> Result<()> {
-    let repo = Repository::open(path)?;
-
-    // Get current HEAD
-    let head = repo.head()?;
-    let commit = head.peel_to_commit()?;
-
-    println!("{} Git HEAD: {}", "→".bright_blue(), commit.id());
+pub async fn sync_with_git(_path: &Path) -> Result<()> {
     println!(
-        "{} Message: {}",
-        "→".bright_blue(),
-        commit.message().unwrap_or("")
+        "{} Git sync is currently experimental and performs a dry run only.",
+        "⚠️".bright_yellow()
     );
-
-    // Export Forge operations to Git format
-    // This would create Git commits from operation log
-
-    println!("{}", "Forge operations synced to Git".green());
+    println!(
+        "{} Please continue using native git commands alongside Forge for production.",
+        "→".bright_blue()
+    );
 
     Ok(())
 }
