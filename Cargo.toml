@@ -4,11 +4,82 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Core async runtime
+tokio = { version = "1.48.0", features = ["full"] }
+
+# CRDT engines
+automerge = "1.0.0-beta.3"
+yrs = "0.21.3"
+
+# Version control
+git2 = "0.19.0"
+
+# Storage
+rusqlite = { version = "0.36.0", features = ["bundled"] }
+bincode = "1.3.3"
+lz4 = "1.28.0"
+
+# Fast data structures
 ahash = "0.8.12"
+dashmap = "6.1.0"
+parking_lot = "0.12.5"
+bytes = "1.10.1"
+
+# File watching
+notify = { version = "8.2.0", features = ["serde"] }
+notify-debouncer-full = "0.6.0"
+
+# Utilities
+uuid = { version = "1.11.0", features = ["v4", "serde"] }
 anyhow = "1.0.100"
+chrono = { version = "0.4.42", features = ["serde"] }
+once_cell = "1.21.3"
+crossbeam = "0.8.4"
+rayon = "1.11.0"
+
+# CLI
+clap = { version = "4.5.50", features = ["derive"] }
 colored = "3.0.0"
-gix = "0.74.1"
-ignore = "0.4.24"
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_cbor = "0.11.2"
+
+# Text processing
+ropey = "1.6.1"
+similar = { version = "2.7.0", features = ["inline"] }
+
+# Tree-sitter for code analysis
+tree-sitter = "0.24.7"
+tree-sitter-rust = "0.24.0"
+
+# Directory walking
 jwalk = "0.8.1"
-notify = "8.2.0"
-similar = "2.7.0"
+walkdir = "2.5.0"
+ignore = "0.4.24"
+
+# Networking (for future sync)
+axum = "0.8.1"
+tower = { version = "0.5.2", features = ["full"] }
+tower-http = { version = "0.6.2", features = ["full"] }
+
+# Performance
+memmap2 = "0.9.9"
+num_cpus = "1.16.0"
+
+# Hashing
+sha2 = "0.10.9"
+
+# Username
+whoami = "1.5.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.build-override]
+opt-level = 3

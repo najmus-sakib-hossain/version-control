@@ -1,0 +1,1 @@
+// Future: WebSocket-based sync protocol for real-time collaboration
