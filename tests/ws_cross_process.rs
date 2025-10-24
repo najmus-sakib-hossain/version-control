@@ -1,4 +1,5 @@
 use forge::crdt::{Operation, OperationType, Position};
+use forge::sync::SyncMessage;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -54,7 +55,15 @@ async fn ws_cross_process_broadcast() {
         }
         if let Ok(tokio_tungstenite::tungstenite::Message::Text(t)) = msg {
             let s = t.to_string();
-            if let Ok(o) = serde_json::from_str::<Operation>(&s) {
+
+            if let Ok(sync_msg) = serde_json::from_str::<SyncMessage>(&s) {
+                if let SyncMessage::Operation { operation } = sync_msg {
+                    if operation.id == op_id {
+                        got_from_b = true;
+                        break;
+                    }
+                }
+            } else if let Ok(o) = serde_json::from_str::<Operation>(&s) {
                 if o.id == op_id {
                     got_from_b = true;
                     break;
