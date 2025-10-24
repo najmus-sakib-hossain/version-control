@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 
@@ -12,7 +12,46 @@ mod watcher;
 
 #[derive(Parser)]
 #[command(name = "forge")]
-#[command(about = "Operation-level version control with CRDT", version)]
+#[command(about = "Next-generation version control with operation-level tracking, CRDT-based sync, and seamless Git integration", version)]
+#[command(after_help = "Forge Features:
+- Operation-level version control with CRDT for conflict-free collaboration
+- Real-time sync between multiple peers via WebSocket
+- Character-level anchors and permalinks for precise code references
+- AI-powered code annotations and context exploration
+- Git repository synchronization and integration
+- Collaborative server for multi-user editing
+- Time-travel debugging to view file states at any timestamp
+- Comprehensive operation logging and querying
+- Seamless Git command support without 'git' prefix
+
+All Git commands are supported without the 'git' prefix. Use 'forge <git-command>' instead of 'git <git-command>'.
+
+Main Porcelain Commands:
+   add, am, archive, backfill, bisect, branch, bundle, checkout, cherry-pick, citool, clean, clone, commit, describe, diff, fetch, format-patch, gc, gitk, grep, gui, init, log, maintenance, merge, mv, notes, pull, push, range-diff, rebase, reset, restore, revert, rm, scalar, shortlog, show, sparse-checkout, stash, status, submodule, survey, switch, tag, worktree
+
+Ancillary Commands / Manipulators:
+   config, fast-export, fast-import, filter-branch, mergetool, pack-refs, prune, reflog, refs, remote, repack, replace
+
+Ancillary Commands / Interrogators:
+   annotate, blame, bugreport, count-objects, diagnose, difftool, fsck, gitweb, help, instaweb, merge-tree, rerere, show-branch, verify-commit, verify-tag, version, whatchanged
+
+Interacting with Others:
+   archimport, cvsexportcommit, cvsimport, cvsserver, imap-send, p4, quiltimport, request-pull, send-email, svn
+
+Low-level Commands / Manipulators:
+   apply, checkout-index, commit-graph, commit-tree, hash-object, index-pack, merge-file, merge-index, mktag, mktree, multi-pack-index, pack-objects, prune-packed, read-tree, replay, symbolic-ref, unpack-objects, update-index, update-ref, write-tree
+
+Low-level Commands / Interrogators:
+   cat-file, cherry, diff-files, diff-index, diff-pairs, diff-tree, for-each-ref, for-each-repo, get-tar-commit-id, ls-files, ls-remote, ls-tree, merge-base, name-rev, pack-redundant, rev-list, rev-parse, show-index, show-ref, unpack-file, var, verify-pack
+
+Low-level Commands / Syncing Repositories:
+   daemon, fetch-pack, http-backend, send-pack, update-server-info
+
+Low-level Commands / Internal Helpers:
+   check-attr, check-ignore, check-mailmap, check-ref-format, column, credential, credential-cache, credential-store, fmt-merge-msg, hook, interpret-trailers, mailinfo, mailsplit, merge-one-file, patch-id, sh-i18n, sh-setup, stripspace
+
+External commands:
+   askpass, askyesno, credential-helper-selector, credential-manager, flow, lfs, update-git-for-windows")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -41,7 +80,7 @@ enum Commands {
     },
 
     /// Query the operation log
-    Log {
+    OpLog {
         #[arg(short, long)]
         file: Option<PathBuf>,
 
@@ -113,11 +152,11 @@ async fn main() -> Result<()> {
 
     let command = match cli.command {
         Some(cmd) => cmd,
-        None => {
-            Cli::command().print_help()?;
-            println!();
-            return Ok(());
-        }
+        None => Commands::Watch {
+            path: ".".into(),
+            sync: false,
+            peer: vec![],
+        },
     };
 
     match command {
@@ -133,7 +172,7 @@ async fn main() -> Result<()> {
                 "  1. {} - Start tracking operations",
                 "forge watch".bright_white()
             );
-            println!("  2. {} - View operation log", "forge log".bright_white());
+            println!("  2. {} - View operation log", "forge oplog".bright_white());
             println!(
                 "  3. {} - Add context to code",
                 "forge annotate <file> <line> -m \"message\"".bright_white()
@@ -148,7 +187,7 @@ async fn main() -> Result<()> {
             watcher::watch(path, sync, peer).await?;
         }
 
-        Commands::Log { file, limit } => {
+        Commands::OpLog { file, limit } => {
             storage::show_log(file, limit.unwrap_or(50)).await?;
         }
 
