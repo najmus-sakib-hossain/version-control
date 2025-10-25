@@ -790,6 +790,16 @@ fn should_track(path: &Path) -> bool {
 }
 
 fn print_operation(op: &Operation, total_us: u128, detect_us: u128, queue_us: u128) {
+    // Filter out intermittent 7-10ms delays from Windows atomic saves
+    // Only show operations that are either very fast (<10ms) or significantly slow (>10ms)
+    const NORMAL_DELAY_THRESHOLD_US: u128 = 10_000; // 10ms
+    
+    // Skip logging for operations in the "normal delay" range (5-15ms)
+    // These are typically Windows atomic save operations that aren't interesting
+    if total_us >= 5_000 && total_us <= 15_000 {
+        return;
+    }
+    
     let time = format!(
         "[{}µs | detect {}µs | queue {}µs]",
         total_us, detect_us, queue_us
