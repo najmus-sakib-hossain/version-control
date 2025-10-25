@@ -49,6 +49,7 @@ serde_cbor = "0.11.2"
 # Text processing
 ropey = "1.6.1"
 similar = { version = "2.7.0", features = ["inline"] }
+memchr = "2.7"
 
 # HTTP client for initial sync fetches
 reqwest = { version = "0.12.8", default-features = false, features = [
@@ -84,6 +85,7 @@ sha2 = "0.10.9"
 
 # Username
 whoami = "1.5.2"
+windows-sys = { version = "0.59.0", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tempfile = "3.10.1"

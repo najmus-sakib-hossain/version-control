@@ -44,7 +44,7 @@ pub async fn connect_peer(
                     if let Some(lamport) = op.lamport() {
                         GLOBAL_CLOCK.observe(lamport);
                     }
-                    if let Ok(true) = oplog.append(op.clone()).await {
+                    if let Ok(true) = oplog.append(op.clone()) {
                         let _ = sync.publish(Arc::new(op));
                     }
                 }
@@ -104,7 +104,7 @@ pub async fn connect_peer(
                                     if let Some(lamport) = op.lamport() {
                                         GLOBAL_CLOCK.observe(lamport);
                                     }
-                                    let _ = oplog_clone.append(op.clone()).await;
+                                    let _ = oplog_clone.append(op.clone());
                                     let _ = sync_clone.publish(Arc::new(op));
                                 }
                             }
@@ -114,7 +114,7 @@ pub async fn connect_peer(
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            let _ = oplog_clone.append(op.clone()).await;
+                            let _ = oplog_clone.append(op.clone());
                             let _ = sync_clone.publish(Arc::new(op));
                         }
                     }
@@ -125,7 +125,7 @@ pub async fn connect_peer(
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            let _ = oplog_clone.append(op.clone()).await;
+                            let _ = oplog_clone.append(op.clone());
                             let _ = sync_clone.publish(Arc::new(op));
                         }
                     }

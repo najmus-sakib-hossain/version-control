@@ -147,7 +147,7 @@ async fn handle_ws(state: AppState, socket: WebSocket) {
                                     if let Some(lamport) = op.lamport() {
                                         GLOBAL_CLOCK.observe(lamport);
                                     }
-                                    let _ = oplog.append(op.clone()).await;
+                                    let _ = oplog.append(op.clone());
                                     let _ = state_recv.sync.publish(Arc::new(op));
                                 }
                             }
@@ -157,7 +157,7 @@ async fn handle_ws(state: AppState, socket: WebSocket) {
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            let _ = oplog.append(op.clone()).await;
+                            let _ = oplog.append(op.clone());
                             let _ = state_recv.sync.publish(Arc::new(op));
                         }
                     }
@@ -168,7 +168,7 @@ async fn handle_ws(state: AppState, socket: WebSocket) {
                             if let Some(lamport) = op.lamport() {
                                 GLOBAL_CLOCK.observe(lamport);
                             }
-                            let _ = oplog.append(op.clone()).await;
+                            let _ = oplog.append(op.clone());
                             let _ = state_recv.sync.publish(Arc::new(op));
                         }
                     }

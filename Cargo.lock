@@ -745,6 +745,7 @@ dependencies = [
  "ignore",
  "jwalk",
  "lz4",
+ "memchr",
  "memmap2",
  "notify",
  "notify-debouncer-full",
@@ -771,6 +772,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "whoami",
+ "windows-sys 0.59.0",
  "yrs",
 ]
 

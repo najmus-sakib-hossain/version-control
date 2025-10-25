@@ -1,4 +1,5 @@
 pub mod detector;
+pub mod cache_warmer;
 
 use anyhow::Result;
 use colored::*;
@@ -72,6 +73,24 @@ pub async fn watch(path: PathBuf, enable_sync: bool, peers: Vec<String>) -> Resu
             );
         }
     }
+
+    // Warm OS page cache with all trackable files
+    // Wait for cache warming to complete before starting watcher
+    // This ensures all subsequent reads are <100µs
+    println!("{}", "📦 Warming OS page cache...".bright_cyan());
+    let cache_stats = tokio::task::spawn_blocking({
+        let repo_root_clone = repo_root.clone();
+        move || cache_warmer::warm_cache(&repo_root_clone)
+    })
+    .await??;
+    
+    println!(
+        "{} Cached {} files ({} KB) in {:.1}ms",
+        "✓".bright_green(),
+        cache_stats.files_cached,
+        cache_stats.bytes_cached / 1024,
+        cache_stats.duration_ms as f64
+    );
 
     detector::start_watching(repo_root, oplog, actor_id, repo_id, sync_mgr).await?;
 
