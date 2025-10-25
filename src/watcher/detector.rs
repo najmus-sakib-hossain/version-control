@@ -20,6 +20,21 @@ use dashmap::DashMap;
 use std::sync::Arc as StdArc;
 use uuid::Uuid;
 
+// Cache path->string conversions (Windows paths are slow to convert)
+static PATH_STRING_CACHE: Lazy<DashMap<PathBuf, String>> = Lazy::new(|| DashMap::new());
+
+// Get cached path string or convert and cache
+#[inline]
+fn path_to_string(path: &Path) -> String {
+    if let Some(cached) = PATH_STRING_CACHE.get(path) {
+        return cached.value().clone();
+    }
+    
+    let s = path.display().to_string();
+    PATH_STRING_CACHE.insert(path.to_path_buf(), s.clone());
+    s
+}
+
 static PROFILE_DETECT: Lazy<bool> = Lazy::new(|| {
     std::env::var("DX_WATCH_PROFILE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -143,7 +158,7 @@ pub async fn start_watching(
                         clear_prev_state(path);
                         clear_last_operation_entry(path);
                         let op = register_operation(Operation::new(
-                            path.display().to_string(),
+                            path_to_string(path),
                             OperationType::FileDelete,
                             actor_id.clone(),
                         ));
@@ -238,25 +253,15 @@ fn emit_operations(
     sync_mgr: &Option<StdArc<SyncManager>>,
 ) -> Result<()> {
     for op in ops {
-        let queue_start = Instant::now();
         let append_result = oplog.append(op.clone())?;
-        let queue_us = queue_start.elapsed().as_micros();
         
         if append_result {
-            let sync_start = Instant::now();
             if let Some(mgr) = sync_mgr {
                 let _ = mgr.publish(StdArc::new(op.clone()));
             }
-            let sync_us = sync_start.elapsed().as_micros();
             
             let total_us = start.elapsed().as_micros();
-            
-            // Enhanced profiling when enabled
-            if *PROFILE_DETECT && (queue_us > 1000 || sync_us > 1000) {
-                eprintln!("⚠️  SLOW: queue={}µs sync={}µs", queue_us, sync_us);
-            }
-            
-            print_operation(&op, total_us, detect_us, queue_us);
+            print_operation(&op, total_us, detect_us, 0);
             record_throughput(total_us);
         }
     }
@@ -333,10 +338,10 @@ fn handle_rename_transition(
 
         let detect_start = Instant::now();
         let op = register_operation(Operation::new(
-            new_path.display().to_string(),
+            path_to_string(&new_path),
             OperationType::FileRename {
-                old_path: old_path.display().to_string(),
-                new_path: new_path.display().to_string(),
+                old_path: path_to_string(&old_path),
+                new_path: path_to_string(&new_path),
             },
             actor_id.to_string(),
         ));
@@ -350,7 +355,7 @@ fn handle_rename_transition(
         clear_last_operation_entry(&old_path);
         let detect_start = Instant::now();
         let op = register_operation(Operation::new(
-            old_path.display().to_string(),
+            path_to_string(&old_path),
             OperationType::FileDelete,
             actor_id.to_string(),
         ));
@@ -371,40 +376,29 @@ fn detect_operations_with_content(
     override_content: Option<String>,
 ) -> Result<DetectionReport> {
     let detect_start = Instant::now();
-    let key = path.to_path_buf();
+    
+    // Avoid path.to_path_buf() allocation - use path directly for lookups
+    let timings = DetectionTimings::default();
 
-    let mut timings = DetectionTimings::default();
-
-    let (mut cached_content, cached_elapsed) = match override_content {
-        Some(content) => (Some(content), 0u128),
-        None => {
-            let cached_start = Instant::now();
-            let content = take_cached_content(path);
-            (content, cached_start.elapsed().as_micros())
-        }
+    // Skip timing cached content lookup - it's noise
+    let mut cached_content = match override_content {
+        Some(content) => Some(content),
+        None => take_cached_content(path),
     };
-    timings.cached_us += cached_elapsed;
 
-    let previous_snapshot = PREV_STATE.get(&key).map(|entry| entry.value().clone());
+    let previous_snapshot = PREV_STATE.get(path).map(|entry| entry.value().clone());
 
     // For files without previous state, use simplified snapshot
     if previous_snapshot.is_none() {
         let new_content = match cached_content.take() {
             Some(text) => text,
-            None => {
-                let read_start = Instant::now();
-                let text = match read_file_fast(path) {
-                    Ok(text) => text,
-                    Err(_) => {
-                        return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
-                    }
-                };
-                timings.read_us += read_start.elapsed().as_micros();
-                text
+            None => match read_file_fast(path) {
+                Ok(text) => text,
+                Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
             }
         };
 
-        if new_content.as_bytes().len() as u64 > MAX_TRACKED_FILE_BYTES {
+        if new_content.len() as u64 > MAX_TRACKED_FILE_BYTES {
             return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
         }
 
@@ -412,7 +406,7 @@ fn detect_operations_with_content(
         let snapshot = build_snapshot_fast(&new_content);
         update_prev_state(path, Some(snapshot));
         let op = register_operation(Operation::new(
-            path.display().to_string(),
+            path_to_string(path),
             OperationType::FileCreate {
                 content: new_content,
             },
@@ -423,23 +417,17 @@ fn detect_operations_with_content(
 
     let mut prev = previous_snapshot.unwrap();
 
-    // Fast path: Just read the whole file since it's in cache
-    // Avoid slow metadata and tail operations on Windows
+    // Read file - should be fast from cache/pool
     let new_content = match cached_content.take() {
         Some(text) => text,
-        None => {
-            let read_start = Instant::now();
-            let text = match read_file_fast(path) {
-                Ok(text) => text,
-                Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
-            };
-            timings.read_us += read_start.elapsed().as_micros();
-            text
+        None => match read_file_fast(path) {
+            Ok(text) => text,
+            Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
         }
     };
     
     // Fast path: if content hasn't changed, skip everything
-    if new_content == prev.content {
+    if new_content.len() == prev.content.len() && new_content == prev.content {
         return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
     }
     
@@ -453,7 +441,7 @@ fn detect_operations_with_content(
             let lamport = GLOBAL_CLOCK.tick();
             let appended_len = appended.chars().count();
             let op = register_operation(Operation::new(
-                path.display().to_string(),
+                path_to_string(path),
                 OperationType::Insert {
                     position: Position::new(
                         line,
@@ -479,9 +467,7 @@ fn detect_operations_with_content(
         return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
     }
 
-    let diff_start = Instant::now();
     let ops = fast_diff_ops(path, actor_id, &prev, &new_snapshot);
-    timings.diff_us += diff_start.elapsed().as_micros();
     update_prev_state(path, Some(new_snapshot));
     Ok(finalize_detection(path, detect_start, timings, ops))
 }
@@ -490,36 +476,35 @@ fn detect_operations_with_content(
 #[inline]
 fn build_snapshot_fast(content: &str) -> FileSnapshot {
     let byte_len = content.len() as u64;
-    let char_len = content.chars().count();
     
-    // Only build minimal mappings - defer full char_to_byte if needed
-    let char_to_byte = if content.is_ascii() {
-        // For ASCII, we can compute on-demand
-        Vec::new() // Empty vec, we'll compute lazily
+    // Use fast char counting
+    let char_len = if content.is_ascii() {
+        content.len()
     } else {
-        // For non-ASCII, build the mapping
-        let mut mapping = Vec::with_capacity(char_len + 1);
-        for (byte_idx, _) in content.char_indices() {
-            mapping.push(byte_idx);
-        }
-        mapping.push(content.len());
-        mapping
+        content.chars().count()
     };
     
-    // Build minimal line_starts - only track \n positions
+    // Only build char_to_byte for non-ASCII
+    let char_to_byte = if content.is_ascii() {
+        Vec::new() // Empty - compute on demand
+    } else {
+        // Build the mapping only for non-ASCII
+        content.char_indices()
+            .map(|(byte_idx, _)| byte_idx)
+            .chain(std::iter::once(content.len()))
+            .collect()
+    };
+    
+    // Build minimal line_starts using memchr (fastest way to find newlines)
     let mut line_starts = vec![0];
-    if memchr::memrchr(b'\n', content.as_bytes()).is_some() {
-        // Only scan if there are newlines
-        let bytes = content.as_bytes();
-        let mut pos = 0;
-        while let Some(idx) = memchr::memchr(b'\n', &bytes[pos..]) {
-            pos += idx + 1;
-            line_starts.push(if content.is_ascii() { 
-                pos 
-            } else { 
-                content[..pos].chars().count()
-            });
-        }
+    let bytes = content.as_bytes();
+    let mut pos = 0;
+    
+    while let Some(idx) = memchr::memchr(b'\n', &bytes[pos..]) {
+        pos += idx + 1;
+        line_starts.push(if content.is_ascii() { pos } else { 
+            content[..pos].chars().count()
+        });
     }
 
     FileSnapshot {
@@ -563,22 +548,27 @@ fn extend_snapshot(snapshot: &mut FileSnapshot, appended: &str) {
     }
 
     let base_byte = snapshot.content.len();
-    let appended_char_count = appended.chars().count();
     let is_ascii = appended.is_ascii();
     
-    // Pop the last sentinel value
-    snapshot.char_to_byte.pop();
-    
-    if is_ascii {
-        // Fast path for ASCII: byte index == char index
-        for i in 0..appended.len() {
-            snapshot.char_to_byte.push(base_byte + i);
-        }
+    // Fast char count
+    let appended_char_count = if is_ascii {
+        appended.len()
     } else {
-        // Slow path for multi-byte
-        for (offset, _) in appended.char_indices() {
-            snapshot.char_to_byte.push(base_byte + offset);
+        appended.chars().count()
+    };
+    
+    // Only build char_to_byte if not ASCII
+    if !snapshot.char_to_byte.is_empty() {
+        snapshot.char_to_byte.pop(); // Remove sentinel
+        
+        if is_ascii {
+            // Fast path for ASCII
+            snapshot.char_to_byte.extend((0..appended.len()).map(|i| base_byte + i));
+        } else {
+            // Slow path for multi-byte
+            snapshot.char_to_byte.extend(appended.char_indices().map(|(offset, _)| base_byte + offset));
         }
+        snapshot.char_to_byte.push(snapshot.content.len() + appended.len());
     }
     
     // Update line starts using memchr
@@ -595,7 +585,6 @@ fn extend_snapshot(snapshot: &mut FileSnapshot, appended: &str) {
     }
 
     snapshot.content.push_str(appended);
-    snapshot.char_to_byte.push(snapshot.content.len());
     snapshot.byte_len = snapshot.content.len() as u64;
     snapshot.char_len += appended_char_count;
 }
@@ -614,11 +603,16 @@ fn fast_diff_ops(
     old_snapshot: &FileSnapshot,
     new_snapshot: &FileSnapshot,
 ) -> Vec<Operation> {
-    // Fast path: identical content
-    if old_snapshot.byte_len == new_snapshot.byte_len
-        && old_snapshot.content == new_snapshot.content
-    {
-        return Vec::new();
+    // Fast path: identical byte length and content check
+    if old_snapshot.byte_len == new_snapshot.byte_len {
+        // Use ptr equality first (fastest)
+        if std::ptr::eq(&old_snapshot.content, &new_snapshot.content) {
+            return Vec::new();
+        }
+        // Then byte comparison
+        if old_snapshot.content.as_bytes() == new_snapshot.content.as_bytes() {
+            return Vec::new();
+        }
     }
 
     // Ensure char_to_byte mappings exist
@@ -635,17 +629,20 @@ fn fast_diff_ops(
     };
 
     let (old_start, old_end, new_start, new_end) = change;
+    
+    // Get byte ranges
     let old_start_byte = old_snap.char_to_byte[old_start];
     let old_end_byte = old_snap.char_to_byte[old_end];
     let new_start_byte = new_snap.char_to_byte[new_start];
     let new_end_byte = new_snap.char_to_byte[new_end];
 
-    let old_segment = &old_snap.content[old_start_byte..old_end_byte];
-    let new_segment = &new_snap.content[new_start_byte..new_end_byte];
-
-    if old_segment.is_empty() && new_segment.is_empty() {
+    // Quick check: if ranges are empty, nothing changed
+    if old_start_byte == old_end_byte && new_start_byte == new_end_byte {
         return Vec::new();
     }
+
+    let old_segment = &old_snap.content[old_start_byte..old_end_byte];
+    let new_segment = &new_snap.content[new_start_byte..new_end_byte];
 
     let (line, col) = line_col_from_snapshot(&old_snap, old_start);
     let lamport = GLOBAL_CLOCK.tick();
@@ -669,7 +666,7 @@ fn fast_diff_ops(
         (true, true) => return Vec::new(),
     };
 
-    let op = Operation::new(path.display().to_string(), op_type, actor_id.to_string());
+    let op = Operation::new(path_to_string(path), op_type, actor_id.to_string());
     vec![register_operation(op)]
 }
 
@@ -745,23 +742,11 @@ fn should_track(path: &Path) -> bool {
     is_trackable(path)
 }
 
-fn print_operation(op: &Operation, total_us: u128, detect_us: u128, queue_us: u128) {
-    // Filter out intermittent 7-10ms delays from Windows atomic saves
-    // Only show operations that are either very fast (<10ms) or significantly slow (>10ms)
-    
-    // Skip logging for operations in the "normal delay" range (5-15ms)
-    // These are typically Windows atomic save operations that aren't interesting
-    if total_us >= 5_000 && total_us <= 15_000 {
-        return;
-    }
-    
-    let time = format!(
-        "[{}µs | detect {}µs | queue {}µs]",
-        total_us, detect_us, queue_us
-    );
+fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u128) {
+    let time = format!("[{}µs | detect {}µs]", total_us, detect_us);
     let time_colored = if total_us < 100 {
         time.bright_green()
-    } else if total_us < 500 {
+    } else if total_us < 1000 {
         time.yellow()
     } else {
         time.red()
@@ -808,13 +793,15 @@ fn register_operation(op: Operation) -> Operation {
 }
 
 fn update_prev_state(path: &Path, snapshot: Option<FileSnapshot>) {
-    let key = path.to_path_buf();
     if let Some(state) = snapshot {
-        PREV_STATE.insert(key, state);
+        PREV_STATE.insert(path.to_path_buf(), state);
     } else {
-        PREV_STATE.remove(&key);
+        PREV_STATE.remove(path);
     }
-    enforce_prev_state_limit();
+    // Only enforce limit periodically to reduce overhead
+    if PREV_STATE.len() > PREV_CONTENT_LIMIT + 100 {
+        enforce_prev_state_limit();
+    }
 }
 
 fn clear_prev_state(path: &Path) {
@@ -849,7 +836,7 @@ fn clear_last_operation_entry(path: &Path) {
 }
 
 fn path_key(path: &Path) -> String {
-    path.display().to_string()
+    path_to_string(path)
 }
 
 fn is_temp_path(path: &Path) -> bool {
@@ -928,23 +915,23 @@ fn take_rename_source() -> Option<PathBuf> {
 }
 
 fn read_file_fast(path: &Path) -> Result<String> {
-    // Try to get a pooled file handle first to avoid slow File::open() on Windows
-    let pool = cache_warmer::FILE_POOL.read();
-    if let Some(file_arc) = pool.get(path) {
-        // Reuse existing file handle with mmap
-        let mmap = unsafe { Mmap::map(file_arc.as_ref())? };
-        return Ok(String::from_utf8_lossy(&mmap).into_owned());
-    }
-    drop(pool);
+    // FAST PATH: Try pooled file handle with read lock (no allocation)
+    {
+        let pool = cache_warmer::FILE_POOL.read();
+        if let Some(file_arc) = pool.get(path) {
+            // Reuse existing file handle with mmap
+            let mmap = unsafe { Mmap::map(file_arc.as_ref())? };
+            return Ok(std::str::from_utf8(&mmap)?.to_string());
+        }
+    } // Drop read lock before acquiring write lock
     
-    // Not in pool - open it, add to pool, and read
+    // SLOW PATH: Not in pool - open it, add to pool, and read
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file)? };
-    let content = String::from_utf8_lossy(&mmap).into_owned();
+    let content = std::str::from_utf8(&mmap)?.to_string();
     
-    // Add to pool for next time
-    let mut pool = cache_warmer::FILE_POOL.write();
-    pool.insert(path.to_path_buf(), Arc::new(file));
+    // Add to pool for next time (write lock held briefly)
+    cache_warmer::FILE_POOL.write().insert(path.to_path_buf(), Arc::new(file));
     
     Ok(content)
 }

@@ -19,4 +19,4 @@ Use `cargo run -- help` (or `forge help` when installed) to explore the complete
 
 > ⚠️ Git sync and time-travel commands are currently marked **experimental**. They are useful for diagnostics but should not be relied on for production-grade workflows yet.
 
-Hello, what do you mean??
+Testing performance optimizations!

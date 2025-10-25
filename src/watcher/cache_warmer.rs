@@ -34,27 +34,29 @@ pub fn warm_cache(repo_root: &Path) -> Result<CacheStats> {
     // Progress tracking
     let cached_count = Arc::new(AtomicUsize::new(0));
     let cached_bytes = Arc::new(AtomicUsize::new(0));
-    let cached_count_clone = cached_count.clone();
-    let cached_bytes_clone = cached_bytes.clone();
     
-    // Pre-load files in parallel using rayon
-    // FIRST: Read files to warm OS cache
-    files.par_iter().for_each(|path| {
-        if let Ok(content) = fs::read(path) {
-            let size = content.len();
-            cached_count_clone.fetch_add(1, Ordering::Relaxed);
-            cached_bytes_clone.fetch_add(size, Ordering::Relaxed);
-            drop(content); // Don't keep in memory
-        }
-    });
+    // Pre-open file handles and warm cache in parallel
+    // This ensures subsequent reads are instant
+    let handles: Vec<_> = files.par_iter()
+        .filter_map(|path| {
+            // Try to open and read to warm cache
+            if let Ok(file) = File::open(path) {
+                // Read to warm OS cache
+                if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
+                    let size = mmap.len();
+                    cached_count.fetch_add(1, Ordering::Relaxed);
+                    cached_bytes.fetch_add(size, Ordering::Relaxed);
+                    return Some((path.clone(), Arc::new(file)));
+                }
+            }
+            None
+        })
+        .collect();
     
-    // SECOND: Open file handles and populate pool
-    // This is done sequentially to avoid lock contention
+    // Populate pool with all opened handles
     let mut pool = FILE_POOL.write();
-    for path in &files {
-        if let Ok(file) = File::open(path) {
-            pool.insert(path.clone(), Arc::new(file));
-        }
+    for (path, file) in handles {
+        pool.insert(path, file);
     }
     drop(pool);
     
