@@ -627,13 +627,8 @@ fn profile_detect(path: &Path, timings: &DetectionTimings, has_ops: bool) {
     // When profiling is disabled, only show if operations were created
     if *PROFILE_DETECT || has_ops {
         println!(
-            "⚙️ detect {} | cached={}µs meta={}µs read={}µs tail={}µs diff={}µs total={}µs",
+            "⚙️ detect {} | total={}µs",
             path.display(),
-            timings.cached_us,
-            timings.metadata_us,
-            timings.read_us,
-            timings.tail_us,
-            timings.diff_us,
             timings.total_us
         );
     }
@@ -921,7 +916,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
                     position.line,
                     position.column,
                     length,
-                    format!("'{}'", preview).bright_black()
+                    format!("'{}'", preview).green()
                 ),
             )
         }
@@ -949,8 +944,8 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
                     "{}:{} '{}' → '{}'",
                     position.line,
                     position.column,
-                    old_preview.bright_black(),
-                    new_preview.bright_cyan()
+                    old_preview.red(),
+                    new_preview.green()
                 ),
             )
         }
@@ -976,7 +971,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
                 .unwrap_or(new_path);
             (
                 "RENAME".bright_yellow(),
-                format!("{} → {}", old_name.bright_black(), new_name.bright_cyan()),
+                format!("{} → {}", old_name.red(), new_name.green()),
             )
         }
     };
