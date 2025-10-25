@@ -5,9 +5,7 @@ use notify::RecommendedWatcher;
 use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecursiveMode, Watcher};
 use once_cell::sync::Lazy;
-use std::fs;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -74,7 +72,6 @@ pub async fn start_watching(
 
     watcher.watch(&path, RecursiveMode::Recursive)?;
 
-    println!("{}", "👁  Watching for operations...".bright_cyan().bold());
     println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
 
     while let Ok(event) = rx.recv() {
@@ -378,7 +375,6 @@ fn detect_operations_with_content(
 
     let mut timings = DetectionTimings::default();
 
-    let override_is_some = override_content.is_some();
     let (mut cached_content, cached_elapsed) = match override_content {
         Some(content) => (Some(content), 0u128),
         None => {
@@ -558,46 +554,6 @@ fn profile_detect(path: &Path, timings: &DetectionTimings) {
             timings.diff_us,
             timings.total_us
         );
-    }
-}
-
-fn build_snapshot(content: String) -> FileSnapshot {
-    let byte_len = content.len() as u64;
-    let char_len = content.chars().count();
-    
-    // Fast path for ASCII-only content (no multi-byte chars)
-    let is_ascii = content.is_ascii();
-    let char_to_byte = if is_ascii {
-        // For ASCII, char index == byte index, so we can use a simple range
-        (0..=content.len()).collect()
-    } else {
-        // Only build full mapping for multi-byte content
-        let mut mapping = Vec::with_capacity(char_len + 1);
-        for (byte_idx, _) in content.char_indices() {
-            mapping.push(byte_idx);
-        }
-        mapping.push(content.len());
-        mapping
-    };
-    
-    // Build line_starts using memchr for speed
-    let mut line_starts = vec![0];
-    let bytes = content.as_bytes();
-    let mut pos = 0;
-    while let Some(idx) = memchr::memchr(b'\n', &bytes[pos..]) {
-        pos += idx + 1;
-        line_starts.push(if is_ascii { pos } else { 
-            // Convert byte position to char position for non-ASCII
-            content[..pos].chars().count()
-        });
-    }
-
-    FileSnapshot {
-        content,
-        byte_len,
-        char_len,
-        char_to_byte,
-        line_starts,
     }
 }
 
@@ -792,7 +748,6 @@ fn should_track(path: &Path) -> bool {
 fn print_operation(op: &Operation, total_us: u128, detect_us: u128, queue_us: u128) {
     // Filter out intermittent 7-10ms delays from Windows atomic saves
     // Only show operations that are either very fast (<10ms) or significantly slow (>10ms)
-    const NORMAL_DELAY_THRESHOLD_US: u128 = 10_000; // 10ms
     
     // Skip logging for operations in the "normal delay" range (5-15ms)
     // These are typically Windows atomic save operations that aren't interesting
@@ -992,14 +947,6 @@ fn read_file_fast(path: &Path) -> Result<String> {
     pool.insert(path.to_path_buf(), Arc::new(file));
     
     Ok(content)
-}
-
-fn read_tail(path: &Path, offset: u64) -> Result<String> {
-    let mut file = fs::File::open(path)?;
-    file.seek(SeekFrom::Start(offset))?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn is_trackable(path: &Path) -> bool {

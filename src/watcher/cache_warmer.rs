@@ -147,6 +147,7 @@ fn is_trackable(path: &Path) -> bool {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CacheStats {
     pub files_cached: usize,
     pub bytes_cached: usize,
