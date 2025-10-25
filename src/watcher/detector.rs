@@ -92,6 +92,19 @@ pub async fn start_watching(
     watcher.watch(&path, RecursiveMode::Recursive)?;
 
     println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
+    
+    // 🔥 Show profiling status
+    if *PROFILE_DETECT {
+        println!(
+            "{} Profiling enabled (DX_WATCH_PROFILE=1) - showing all detection timings",
+            "🔍".bright_yellow()
+        );
+    } else {
+        println!(
+            "{} Set DX_WATCH_PROFILE=1 to see detailed detection timings",
+            "💡".bright_black()
+        );
+    }
 
     while let Ok(event) = rx.recv() {
         let start = Instant::now();
@@ -212,6 +225,11 @@ static TEMP_CONTENT_CACHE: Lazy<DashMap<PathBuf, (Arc<String>, Instant)>> =
     Lazy::new(|| DashMap::new());
 static LAST_RENAME_SOURCE: Lazy<StdMutex<Option<PathBuf>>> = Lazy::new(|| StdMutex::new(None));
 
+// 🔥 Deduplication: Track last processed file state to avoid duplicate operations
+// Maps path -> (content_hash, timestamp)
+static LAST_PROCESSED: Lazy<DashMap<PathBuf, (u64, Instant)>> = Lazy::new(|| DashMap::new());
+const DEDUP_WINDOW_MS: u128 = 50; // Ignore duplicate events within 50ms
+
 const PREV_CONTENT_LIMIT: usize = 2_048;
 const MAX_TRACKED_FILE_BYTES: u64 = 1_000_000; // ~1MB per file
 const TEMP_CACHE_LIMIT: usize = 256;
@@ -300,6 +318,12 @@ fn process_path(
         return Ok(());
     }
 
+    // 🔥 DEDUPLICATION: Check if we recently processed this exact file state
+    // Text editors often trigger multiple file events for a single save
+    if should_skip_duplicate(path) {
+        return Ok(());
+    }
+
     match detect_operations(path, actor_id) {
         Ok(report) => {
             if !report.ops.is_empty() {
@@ -311,6 +335,38 @@ fn process_path(
     }
 
     Ok(())
+}
+
+// 🔥 Deduplication helper: Skip if we just processed this file
+fn should_skip_duplicate(path: &Path) -> bool {
+    // Get file metadata for hash
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    
+    // 🔥 Better hash: combine file size + modified time
+    // This catches atomic saves where size stays the same
+    let modified_time = metadata.modified().ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    
+    let content_hash = metadata.len().wrapping_add(modified_time);
+    let now = Instant::now();
+    
+    // Check if we have a recent entry
+    if let Some(entry) = LAST_PROCESSED.get(path) {
+        let (last_hash, last_time) = *entry.value();
+        
+        // Skip if same hash and within dedup window
+        if last_hash == content_hash && last_time.elapsed().as_millis() < DEDUP_WINDOW_MS {
+            return true; // Duplicate - skip processing
+        }
+    }
+    
+    // Update tracking
+    LAST_PROCESSED.insert(path.to_path_buf(), (content_hash, now));
+    false // Not a duplicate - process it
 }
 
 fn handle_rename_transition(
@@ -554,12 +610,22 @@ fn finalize_detection(
     ops: Vec<Operation>,
 ) -> DetectionReport {
     timings.total_us = detect_start.elapsed().as_micros();
-    profile_detect(path, &timings);
+    
+    // 🔥 Show profile logs when profiling is enabled OR operations were created
+    profile_detect(path, &timings, !ops.is_empty());
+    
     DetectionReport { ops, timings }
 }
 
-fn profile_detect(path: &Path, timings: &DetectionTimings) {
-    if *PROFILE_DETECT {
+fn profile_detect(path: &Path, timings: &DetectionTimings, has_ops: bool) {
+    // Skip if profiling is disabled AND no operations were created
+    if !*PROFILE_DETECT && !has_ops {
+        return;
+    }
+    
+    // When profiling is enabled, show all logs
+    // When profiling is disabled, only show if operations were created
+    if *PROFILE_DETECT || has_ops {
         println!(
             "⚙️ detect {} | cached={}µs meta={}µs read={}µs tail={}µs diff={}µs total={}µs",
             path.display(),
@@ -661,11 +727,31 @@ fn fast_diff_ops(
 
     let (old_start, old_end, new_start, new_end) = change;
     
-    // Get byte ranges
-    let old_start_byte = old_snap.char_to_byte[old_start];
-    let old_end_byte = old_snap.char_to_byte[old_end];
-    let new_start_byte = new_snap.char_to_byte[new_start];
-    let new_end_byte = new_snap.char_to_byte[new_end];
+    // 🔥 FIX: Safe byte range calculation with bounds checking
+    // Get byte ranges - ensure indices are within bounds
+    let old_start_byte = if old_start < old_snap.char_to_byte.len() {
+        old_snap.char_to_byte[old_start]
+    } else {
+        old_snap.content.len()
+    };
+    
+    let old_end_byte = if old_end < old_snap.char_to_byte.len() {
+        old_snap.char_to_byte[old_end]
+    } else {
+        old_snap.content.len()
+    };
+    
+    let new_start_byte = if new_start < new_snap.char_to_byte.len() {
+        new_snap.char_to_byte[new_start]
+    } else {
+        new_snap.content.len()
+    };
+    
+    let new_end_byte = if new_end < new_snap.char_to_byte.len() {
+        new_snap.char_to_byte[new_end]
+    } else {
+        new_snap.content.len()
+    };
 
     // Quick check: if ranges are empty, nothing changed
     if old_start_byte == old_end_byte && new_start_byte == new_end_byte {
@@ -744,23 +830,39 @@ fn compute_change_range_fast(
         .count()
         .min(remaining_old.min(remaining_new));
     
+    // 🔥 FIX: Handle ASCII fast path (char_to_byte is empty for ASCII)
+    let old_is_ascii = old_snapshot.char_to_byte.is_empty();
+    let new_is_ascii = new_snapshot.char_to_byte.is_empty();
+    
     // Convert byte positions to char positions
-    let prefix_chars = old_snapshot.char_to_byte
-        .iter()
-        .position(|&b| b >= common_prefix_bytes)
-        .unwrap_or(old_snapshot.char_len);
+    let prefix_chars = if old_is_ascii {
+        common_prefix_bytes // For ASCII: byte pos == char pos
+    } else {
+        old_snapshot.char_to_byte
+            .iter()
+            .position(|&b| b >= common_prefix_bytes)
+            .unwrap_or(old_snapshot.char_len)
+    };
     
     let old_suffix_byte_pos = old_bytes.len() - common_suffix_bytes;
-    let old_suffix_chars = old_snapshot.char_to_byte
-        .iter()
-        .position(|&b| b >= old_suffix_byte_pos)
-        .unwrap_or(old_snapshot.char_len);
+    let old_suffix_chars = if old_is_ascii {
+        old_suffix_byte_pos // For ASCII: byte pos == char pos
+    } else {
+        old_snapshot.char_to_byte
+            .iter()
+            .position(|&b| b >= old_suffix_byte_pos)
+            .unwrap_or(old_snapshot.char_len)
+    };
     
     let new_suffix_byte_pos = new_bytes.len() - common_suffix_bytes;
-    let new_suffix_chars = new_snapshot.char_to_byte
-        .iter()
-        .position(|&b| b >= new_suffix_byte_pos)
-        .unwrap_or(new_snapshot.char_len);
+    let new_suffix_chars = if new_is_ascii {
+        new_suffix_byte_pos // For ASCII: byte pos == char pos
+    } else {
+        new_snapshot.char_to_byte
+            .iter()
+            .position(|&b| b >= new_suffix_byte_pos)
+            .unwrap_or(new_snapshot.char_len)
+    };
     
     if prefix_chars == old_snapshot.char_len && prefix_chars == new_snapshot.char_len {
         return None;
@@ -802,33 +904,102 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
         time.red()
     };
 
+    // Extract filename from path (cleaner display)
+    let filename = std::path::Path::new(&op.file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&op.file_path);
+
+    // 📝 Build detailed operation info with content preview
     let (action, details) = match &op.op_type {
-        OperationType::Insert { length, .. } => ("INSERT".green(), format!("+{} chars", length)),
-        OperationType::Delete { length, .. } => ("DELETE".red(), format!("-{} chars", length)),
+        OperationType::Insert { position, content, length } => {
+            let preview = truncate_with_preview(content, 40);
+            (
+                "INSERT".green(),
+                format!(
+                    "{}:{} +{} chars {}",
+                    position.line,
+                    position.column,
+                    length,
+                    format!("'{}'", preview).bright_black()
+                ),
+            )
+        }
+        OperationType::Delete { position, length } => {
+            (
+                "DELETE".red(),
+                format!(
+                    "{}:{} -{} chars",
+                    position.line,
+                    position.column,
+                    length
+                ),
+            )
+        }
         OperationType::Replace {
+            position,
             old_content,
             new_content,
-            ..
-        } => (
-            "REPLACE".yellow(),
-            format!("{}→{} chars", old_content.len(), new_content.len()),
-        ),
-        OperationType::FileCreate { .. } => ("CREATE".bright_green(), "file".to_string()),
-        OperationType::FileDelete => ("DELETE".bright_red(), "file".to_string()),
-        OperationType::FileRename { old_path, new_path } => (
-            "RENAME".bright_yellow(),
-            format!("{} → {}", old_path, new_path),
-        ),
+        } => {
+            let old_preview = truncate_with_preview(old_content, 20);
+            let new_preview = truncate_with_preview(new_content, 20);
+            (
+                "REPLACE".yellow(),
+                format!(
+                    "{}:{} '{}' → '{}'",
+                    position.line,
+                    position.column,
+                    old_preview.bright_black(),
+                    new_preview.bright_cyan()
+                ),
+            )
+        }
+        OperationType::FileCreate { content } => {
+            let size = content.len();
+            let lines = content.lines().count();
+            (
+                "CREATE".bright_green(),
+                format!("file ({} bytes, {} lines)", size, lines),
+            )
+        }
+        OperationType::FileDelete => {
+            ("DELETE".bright_red(), "file".to_string())
+        }
+        OperationType::FileRename { old_path, new_path } => {
+            let old_name = std::path::Path::new(old_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(old_path);
+            let new_name = std::path::Path::new(new_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(new_path);
+            (
+                "RENAME".bright_yellow(),
+                format!("{} → {}", old_name.bright_black(), new_name.bright_cyan()),
+            )
+        }
     };
 
     println!(
-        "{} {} {} {} {}",
+        "{} {} {} {}",
         perf_indicator,
         time_colored,
         action.bold(),
-        op.file_path.bright_white(),
-        details.bright_black()
+        format!("{} {}", filename.bright_white(), details)
     );
+}
+
+// 🔧 Helper: Truncate string with ellipsis for clean preview
+fn truncate_with_preview(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        // Escape newlines and tabs for display
+        s.replace('\n', "\\n").replace('\t', "\\t")
+    } else {
+        // Show first part with ellipsis
+        let truncated = &s[..max_len.min(s.len())];
+        format!("{}…", truncated.replace('\n', "\\n").replace('\t', "\\t"))
+    }
 }
 
 fn register_operation(op: Operation) -> Operation {
