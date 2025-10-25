@@ -242,12 +242,23 @@ fn emit_operations(
 ) -> Result<()> {
     for op in ops {
         let queue_start = Instant::now();
-        if oplog.append(op.clone())? {
-            let queue_us = queue_start.elapsed().as_micros();
+        let append_result = oplog.append(op.clone())?;
+        let queue_us = queue_start.elapsed().as_micros();
+        
+        if append_result {
+            let sync_start = Instant::now();
             if let Some(mgr) = sync_mgr {
                 let _ = mgr.publish(StdArc::new(op.clone()));
             }
+            let sync_us = sync_start.elapsed().as_micros();
+            
             let total_us = start.elapsed().as_micros();
+            
+            // Enhanced profiling when enabled
+            if *PROFILE_DETECT && (queue_us > 1000 || sync_us > 1000) {
+                eprintln!("⚠️  SLOW: queue={}µs sync={}µs", queue_us, sync_us);
+            }
+            
             print_operation(&op, total_us, detect_us, queue_us);
             record_throughput(total_us);
         }

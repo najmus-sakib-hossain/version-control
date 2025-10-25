@@ -18,3 +18,5 @@ Use `cargo run -- help` (or `forge help` when installed) to explore the complete
   3. Hardened the Lamport clock across processes with a hybrid logical clock and remote observation.
 
 > ⚠️ Git sync and time-travel commands are currently marked **experimental**. They are useful for diagnostics but should not be relied on for production-grade workflows yet.
+
+
