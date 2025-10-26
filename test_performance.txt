@@ -1,6 +1,0 @@
-Testing ultra-fast quality mode performance.
-This is a small test file to measure detection speed.
-Adding a third line to test append performance.
-Fourth line for testing.
-Fifth line - testing performance!
-Six
