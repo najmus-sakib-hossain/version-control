@@ -40,7 +40,7 @@ pub async fn watch(path: PathBuf, enable_sync: bool, peers: Vec<String>) -> Resu
         actor_id.bright_yellow()
     );
     println!(
-        "{} Sync: {}\n",
+        "{} Sync: {}",
         "→".bright_blue(),
         if enable_sync {
             "enabled".green()
