@@ -94,10 +94,10 @@ use forge::ForgeWatcher;
 async fn main() -> anyhow::Result<()> {
     // Create watcher
     let watcher = ForgeWatcher::new("./src", false, vec![]).await?;
-    
+
     // Run (emits rapid + quality events internally)
     watcher.run().await?;
-    
+
     Ok(())
 }
 ```
@@ -106,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
 
 ## 🏗️ Project Structure
 
-```
+```text
 forge/
 ├── Cargo.toml          # Library metadata
 ├── README.md           # Usage documentation
@@ -156,13 +156,13 @@ cargo build --release --lib
 
 ### Rapid Event (logged first)
 
-```
+```text
 ⚡ [RAPID 8µs] test.txt changed
 ```
 
 ### Quality Event (logged after)
 
-```
+```text
 ✨ [QUALITY 52µs | total 60µs]
   + test.txt @ 1:1
     Hello, Forge!

@@ -56,6 +56,8 @@ async fn main() -> anyhow::Result<()> {
 
     let watcher = ForgeWatcher::new(".", false, vec![]).await?;
 
+```
+
     ```bash
 
     // Run the watcher# Small appends (cached, best case)
@@ -78,13 +80,13 @@ async fn main() -> anyhow::Result<()> {
 
 ```bash**RAPID mode**: ✅ Target exceeded (3µs is 6x faster than 20µs goal!)
 
-# Simple watcher example**QUALITY mode**: ⚠️ 58-301µs (varies by edit type - appends are fast, full diffs slower)
+## Simple watcher example**QUALITY mode**: ⚠️ 58-301µs (varies by edit type - appends are fast, full diffs slower)
 
 cargo run --release --example simple
 
 ## Quick Start
 
-# Full CLI with all features
+## Full CLI with all features
 
 cargo run --release --bin forge```bash
 
@@ -159,10 +161,11 @@ Quality Mode (Full Analysis):
 
 ### Example Output
 
-```
+```text
 ⚡ [RAPID 8µs] test.txt changed
 ✨ [QUALITY 52µs | total 60µs]
-  + test.txt @ 1:1
+
+- test.txt @ 1:1
     Hello, Forge!
 ```
 
@@ -178,7 +181,7 @@ Quality Mode (Full Analysis):
 
 ### Event Flow
 
-```
+```text
 File Change
     ↓
 [1ms Debounce]
@@ -221,13 +224,14 @@ Perfect for building DX tools that need:
 ```rust
 use forge::{ForgeWatcher, Operation, OperationType};
 
-#[tokio::main]
+## [tokio::main]
+
 async fn main() -> anyhow::Result<()> {
     let watcher = ForgeWatcher::new("./src", false, vec![]).await?;
-    
+
     // The watcher automatically handles events internally
     // and prints detailed logs for rapid + quality events
-    
+
     watcher.run().await?;
     Ok(())
 }
@@ -240,7 +244,8 @@ async fn main() -> anyhow::Result<()> {
 ```rust
 use forge::ForgeWatcher;
 
-#[tokio::main]
+## [tokio::main]
+
 async fn main() -> anyhow::Result<()> {
     // Enable sync with remote peer
     let watcher = ForgeWatcher::new(
@@ -248,7 +253,7 @@ async fn main() -> anyhow::Result<()> {
         true,  // enable_sync
         vec!["ws://localhost:3000/ws".to_string()]
     ).await?;
-    
+
     watcher.run().await?;
     Ok(())
 }
