@@ -205,11 +205,11 @@ const DEBOUNCE_MS: u64 = 1; // Ultra-fast 1ms debounce for sub-20µs target
 
 impl WatchMode {
     fn from_env() -> Self {
-        println!(
-            "{} Using ultra-fast mode: {}ms debounce (sub-20µs target)",
-            "⚡".bright_yellow(),
-            DEBOUNCE_MS
-        );
+        // println!(
+        //     "{} Using ultra-fast mode: {}ms debounce (sub-20µs target)",
+        //     "⚡".bright_yellow(),
+        //     DEBOUNCE_MS
+        // );
         WatchMode::Debounced(Duration::from_millis(DEBOUNCE_MS))
     }
 }
@@ -226,34 +226,34 @@ pub async fn start_watching(
     println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
     
     // ⚡⚡ Show dual-watcher status
-    if *DISABLE_RAPID_MODE {
-        println!(
-            "{} Dual-watcher: DISABLED (quality mode only)",
-            "⚠️".bright_yellow()
-        );
-        println!(
-            "{} Set DX_DISABLE_RAPID_MODE=0 to enable ultra-fast mode",
-            "💡".bright_black()
-        );
-    } else {
-        println!(
-            "{} Dual-watcher: ENABLED (rapid <20µs + quality <60µs)",
-            "⚡⚡".bright_green()
-        );
-    }
+    // if *DISABLE_RAPID_MODE {
+    //     println!(
+    //         "{} Dual-watcher: DISABLED (quality mode only)",
+    //         "⚠️".bright_yellow()
+    //     );
+    //     println!(
+    //         "{} Set DX_DISABLE_RAPID_MODE=0 to enable ultra-fast mode",
+    //         "💡".bright_black()
+    //     );
+    // } else {
+    //     println!(
+    //         "{} Dual-watcher: ENABLED (rapid <20µs + quality <60µs)",
+    //         "⚡⚡".bright_green()
+    //     );
+    // }
     
     // 🔥 Show profiling status
-    if *PROFILE_DETECT {
-        println!(
-            "{} Profiling enabled (DX_WATCH_PROFILE=1) - showing all detection timings",
-            "🔍".bright_yellow()
-        );
-    } else {
-        println!(
-            "{} Set DX_WATCH_PROFILE=1 to see detailed detection timings",
-            "💡".bright_black()
-        );
-    }
+    // if *PROFILE_DETECT {
+    //     println!(
+    //         "{} Profiling enabled (DX_WATCH_PROFILE=1) - showing all detection timings",
+    //         "🔍".bright_yellow()
+    //     );
+    // } else {
+    //     println!(
+    //         "{} Set DX_WATCH_PROFILE=1 to see detailed detection timings",
+    //         "💡".bright_black()
+    //     );
+    // }
 
     match mode {
         WatchMode::Debounced(debounce) => {

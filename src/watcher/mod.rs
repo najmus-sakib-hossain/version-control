@@ -11,7 +11,7 @@ use crate::sync::{SyncManager, remote::connect_peer};
 use std::sync::Arc as StdArc;
 
 pub async fn watch(path: PathBuf, enable_sync: bool, peers: Vec<String>) -> Result<()> {
-    println!("{}", "Initializing operation tracker...".bright_cyan());
+    // println!("{}", "Initializing operation tracker...".bright_cyan());
 
     let repo_root = path.canonicalize().unwrap_or_else(|_| path.clone());
     let forge_dir = repo_root.join(".dx/forge");

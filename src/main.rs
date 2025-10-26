@@ -121,8 +121,8 @@ enum Commands {
         line: Option<usize>,
     },
 
-    /// Sync with Git repository
-    GitSync {
+    /// Sync Forge repository
+    ForgeSync {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
     },
@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
         Commands::Watch { path, sync, peer } => {
             println!(
                 "{}",
-                "👁  Starting operation-level tracking...".cyan().bold()
+                "✔ Starting operation-level tracking...".cyan().bold()
             );
             watcher::watch(path, sync, peer).await?;
         }
@@ -223,10 +223,8 @@ async fn main() -> Result<()> {
             context::show_context(&file, line).await?;
         }
 
-        Commands::GitSync { path } => {
-            println!("{}", "🔄 Syncing with Git...".cyan().bold());
+        Commands::ForgeSync { path } => {
             storage::git_sync(&path).await?;
-            println!("{}", "✓ Sync complete".green());
         }
 
         Commands::GitPassthrough(args) => {

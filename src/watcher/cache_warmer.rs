@@ -20,7 +20,7 @@ pub static FILE_POOL: Lazy<RwLock<HashMap<PathBuf, Arc<File>>>> = Lazy::new(|| R
 pub fn warm_cache(repo_root: &Path) -> Result<CacheStats> {
     let start = Instant::now();
     
-    println!("{}", "📦 Warming OS page cache...".bright_cyan());
+    // println!("{}", "📦 Warming OS page cache...".bright_cyan());
     
     // Collect all trackable files
     let files = collect_trackable_files(repo_root)?;
@@ -64,13 +64,13 @@ pub fn warm_cache(repo_root: &Path) -> Result<CacheStats> {
     let final_bytes = cached_bytes.load(Ordering::Relaxed);
     let elapsed = start.elapsed();
     
-    println!(
-        "{} Cached {} files ({} KB) in {:?}",
-        "✓".bright_green(),
-        final_count,
-        final_bytes / 1024,
-        elapsed
-    );
+    // println!(
+    //     "{} Cached {} files ({} KB) in {:?}",
+    //     "✓".bright_green(),
+    //     final_count,
+    //     final_bytes / 1024,
+    //     elapsed
+    // );
     
     Ok(CacheStats {
         files_cached: final_count,
