@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
-use forge_watcher::{context, server, storage, watcher};
+use dx_forge::{context, server, storage, watcher};
 use std::path::PathBuf;
 
 #[derive(Parser)]
