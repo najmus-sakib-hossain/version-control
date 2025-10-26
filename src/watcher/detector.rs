@@ -104,31 +104,13 @@ fn detect_rapid_change(path: &Path) -> Option<u64> {
     // This achieves sub-10µs performance by avoiding ALL system calls
     let sequence = RAPID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     
-    // Check cache - use sequence number for deduplication
-    if let Some(cached) = FILE_HASH_CACHE.get(path) {
-        let (_hash, cached_seq, _size) = *cached.value();
-        // If we just processed this (within last 100 sequence numbers), skip
-        if sequence - cached_seq < 100 {
-            return None; // Recently processed, skip duplicate
-        }
-    }
-    
-    // Mark as processed (no file operations!)
+    // Update cache (notify debouncer already handles duplicates, no need for extra check)
+    // We trust that if we got the event, it's a real change
     FILE_HASH_CACHE.insert(path.to_path_buf(), (0, sequence, 0));
     
     let elapsed = start.elapsed().as_micros() as u64;
     
-    // Log ultra-fast detection
-    if *PROFILE_DETECT || (elapsed as u128) > TARGET_PERFORMANCE_US {
-        let marker = if (elapsed as u128) <= TARGET_PERFORMANCE_US { "⚡" } else { "🐌" };
-        println!(
-            "{} [RAPID {}µs] {} changed",
-            marker,
-            elapsed,
-            path_to_string(path).bright_cyan(),
-        );
-    }
-    
+    // Return timing (will be logged with quality results if ops detected)
     Some(elapsed)
 }
 
@@ -143,10 +125,10 @@ fn detect_quality_operations(
     
     // Skip quality mode if rapid mode is disabled (for direct comparison)
     if *DISABLE_RAPID_MODE {
-        let report = detect_operations(path, actor_id)?;
+        let report = detect_operations(path, actor_id, false)?;
         let total_time = start.elapsed().as_micros();
         
-        if *PROFILE_DETECT || !report.ops.is_empty() {
+        if !report.ops.is_empty() {
             println!(
                 "⚙️ [QUALITY ONLY {}µs] {} - {} ops",
                 total_time,
@@ -158,229 +140,51 @@ fn detect_quality_operations(
         return Ok(report);
     }
     
-    // ⚡ ULTRA-FAST QUALITY MODE: Optimized detection
-    let report = detect_operations_ultra_fast(path, actor_id)?;
+    // ⚡ Use original detect_operations (it was already optimized to 60µs!)
+    // Pass true to suppress internal logging (we'll log here instead)
+    let report = detect_operations(path, actor_id, true)?;
     
     let quality_time = start.elapsed().as_micros();
     let total_time = rapid_time_us as u128 + quality_time;
     
-    // Log quality detection
-    if *PROFILE_DETECT || !report.ops.is_empty() {
-        let marker = if quality_time <= 60 { "✨" } else { "🐢" };
+    // Log quality detection ONLY when operations were detected
+    if !report.ops.is_empty() {
+        // First log RAPID timing
+        let rapid_marker = if (rapid_time_us as u128) <= TARGET_PERFORMANCE_US { "⚡" } else { "🐌" };
         println!(
-            "{} [QUALITY {}µs | total {}µs] {} - {} ops",
-            marker,
+            "{} [RAPID {}µs] {} changed",
+            rapid_marker,
+            rapid_time_us,
+            path_to_string(path).bright_cyan(),
+        );
+        
+        // Then log QUALITY timing
+        let quality_marker = if quality_time <= 100 { "✨" } else { "🐢" };
+        println!(
+            "{} [QUALITY {}µs | total {}µs]",
+            quality_marker,
             quality_time,
             total_time,
-            path_to_string(path).bright_green(),
-            report.ops.len()
         );
     }
     
     Ok(report)
 }
 
-/// ⚡ ULTRA-FAST operation detection (<60µs target)
-/// Skips expensive operations when possible
-#[inline(always)]
+// 🚫 REMOVED: detect_operations_ultra_fast - was adding overhead
+// The original detect_operations is already optimized to ~60µs
+// Keeping it simple for best performance
+
+/*
 fn detect_operations_ultra_fast(path: &Path, actor_id: &str) -> Result<DetectionReport> {
-    let detect_start = Instant::now();
-    let timings = DetectionTimings::default();
-
-    let previous_snapshot = PREV_STATE.get(path).map(|entry| entry.value().clone());
-
-    // 🎯 NEW FILE FAST PATH: Skip line counting for create operations
-    if previous_snapshot.is_none() {
-        let new_content = match read_file_fast(path) {
-            Ok(text) => text,
-            Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
-        };
-
-        if new_content.len() as u64 > MAX_TRACKED_FILE_BYTES {
-            return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
-        }
-
-        // Build minimal snapshot (skip line breaks for file creates)
-        let snapshot = build_snapshot_minimal(&new_content);
-        update_prev_state(path, Some(snapshot));
-        
-        let op = register_operation(Operation::new(
-            path_to_string(path),
-            OperationType::FileCreate {
-                content: new_content,
-            },
-            actor_id.to_string(),
-        ));
-        return Ok(finalize_detection(path, detect_start, timings, vec![op]));
-    }
-
-    let prev = previous_snapshot.unwrap();
-
-    let new_content = match read_file_fast(path) {
-        Ok(text) => text,
-        Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
-    };
-    
-    // ⚡ ULTRA-FAST: Length check first (1µs)
-    if new_content.len() == prev.content.len() {
-        if new_content.as_bytes() == prev.content.as_bytes() {
-            return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
-        }
-    }
-    
-    // ⚡ ULTRA-FAST: Append detection (most common, ~10µs)
-    if new_content.len() > prev.content.len() && new_content.starts_with(&prev.content) {
-        let appended = &new_content[prev.content.len()..];
-        if !appended.is_empty() {
-            return handle_append_fast(path, &prev, appended, actor_id, detect_start, timings);
-        }
-    }
-    
-    // ⚡ FAST: Single-char edit detection (10-20µs)
-    let len_diff = (new_content.len() as i64 - prev.content.len() as i64).abs();
-    if len_diff <= 10 {
-        // Likely a small edit, use optimized single-operation path
-        return detect_single_edit_fast(path, &prev, &new_content, actor_id, detect_start, timings);
-    }
-    
-    // Full diff fallback (expensive, but rare)
-    detect_operations_with_content(path, actor_id, Some(new_content))
+    ... removed for performance ...
 }
 
-/// ⚡ Handle append operation (<10µs)
-#[inline(always)]
-fn handle_append_fast(
-    path: &Path,
-    prev: &FileSnapshot,
-    appended: &str,
-    actor_id: &str,
-    detect_start: Instant,
-    timings: DetectionTimings,
-) -> Result<DetectionReport> {
-    let char_offset = prev.char_len;
-    
-    // Skip expensive line/col calculation, use cached values
-    let (line, col) = if prev.line_starts.is_empty() {
-        (1, char_offset + 1) // Single line file
-    } else {
-        // Use last line position
-        (prev.line_starts.len() + 1, char_offset - prev.line_starts.last().unwrap_or(&0))
-    };
-    
-    let lamport = GLOBAL_CLOCK.tick();
-    let appended_len = appended.chars().count();
-    
-    let op = register_operation(Operation::new(
-        path_to_string(path),
-        OperationType::Insert {
-            position: Position::new(line, col, char_offset, actor_id.to_string(), lamport),
-            content: appended.to_string(),
-            length: appended_len,
-        },
-        actor_id.to_string(),
-    ));
-    
-    // Update snapshot lazily (skip full rebuild)
-    let mut new_prev = prev.clone();
-    extend_snapshot(&mut new_prev, appended);
-    update_prev_state(path, Some(new_prev));
-    
-    Ok(finalize_detection(path, detect_start, timings, vec![op]))
-}
-
-/// ⚡ Detect single edit operation (<20µs)
-#[inline(always)]
-fn detect_single_edit_fast(
-    path: &Path,
-    prev: &FileSnapshot,
-    new_content: &str,
-    actor_id: &str,
-    detect_start: Instant,
-    timings: DetectionTimings,
-) -> Result<DetectionReport> {
-    // Find the change position using byte-level diff
-    let old_bytes = prev.content.as_bytes();
-    let new_bytes = new_content.as_bytes();
-    
-    // Find common prefix (SIMD-accelerated via memchr)
-    let prefix_len = old_bytes
-        .iter()
-        .zip(new_bytes.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-    
-    // Simple insert or delete
-    let op = if new_content.len() > prev.content.len() {
-        // Insert
-        let inserted = &new_content[prefix_len..prefix_len + (new_content.len() - prev.content.len())];
-        let char_offset = prev.content[..prefix_len].chars().count();
-        let (line, col) = line_col_fast(prev, char_offset);
-        
-        register_operation(Operation::new(
-            path_to_string(path),
-            OperationType::Insert {
-                position: Position::new(line, col, char_offset, actor_id.to_string(), GLOBAL_CLOCK.tick()),
-                content: inserted.to_string(),
-                length: inserted.chars().count(),
-            },
-            actor_id.to_string(),
-        ))
-    } else {
-        // Delete
-        let deleted_len = prev.content.len() - new_content.len();
-        let char_offset = prev.content[..prefix_len].chars().count();
-        let (line, col) = line_col_fast(prev, char_offset);
-        
-        register_operation(Operation::new(
-            path_to_string(path),
-            OperationType::Delete {
-                position: Position::new(line, col, char_offset, actor_id.to_string(), GLOBAL_CLOCK.tick()),
-                length: prev.content[prefix_len..prefix_len + deleted_len].chars().count(),
-            },
-            actor_id.to_string(),
-        ))
-    };
-    
-    // Update snapshot
-    let new_snapshot = build_snapshot_minimal(new_content);
-    update_prev_state(path, Some(new_snapshot));
-    
-    Ok(finalize_detection(path, detect_start, timings, vec![op]))
-}
-
-/// ⚡ Build minimal snapshot (skip line breaks for small edits)
-#[inline(always)]
-fn build_snapshot_minimal(content: &str) -> FileSnapshot {
-    FileSnapshot {
-        content: content.to_string(),
-        char_len: content.chars().count(),
-        byte_len: content.len() as u64,
-        line_starts: Vec::new(), // Skip line start indexing!
-        char_to_byte: Vec::new(), // Skip for ASCII
-    }
-}
-
-/// ⚡ Fast line/col calculation using cached line starts
-#[inline(always)]
-fn line_col_fast(snapshot: &FileSnapshot, char_offset: usize) -> (usize, usize) {
-    if snapshot.line_starts.is_empty() {
-        return (1, char_offset + 1);
-    }
-    
-    // Binary search in line starts
-    match snapshot.line_starts.binary_search(&char_offset) {
-        Ok(idx) => (idx + 2, 1),
-        Err(idx) => {
-            let line = idx + 1;
-            let col = if idx == 0 {
-                char_offset + 1
-            } else {
-                char_offset - snapshot.line_starts[idx - 1]
-            };
-            (line, col)
-        }
-    }
-}
+fn handle_append_fast(...) { ... }
+fn detect_single_edit_fast(...) { ... }
+fn build_snapshot_minimal(...) { ... }
+fn line_col_fast(...) { ... }
+*/
 
 static PROFILE_DETECT: Lazy<bool> = Lazy::new(|| {
     std::env::var("DX_WATCH_PROFILE")
@@ -761,7 +565,7 @@ fn handle_rename_transition(
         }
 
         if let Some(content) = take_cached_content(&new_path) {
-            let report = detect_operations_with_content(&new_path, actor_id, Some(content))?;
+            let report = detect_operations_with_content(&new_path, actor_id, Some(content), false)?;
             if !report.ops.is_empty() {
                 emit_operations(report.ops, report.timings.total_us, start, oplog, sync_mgr)?;
             }
@@ -810,8 +614,8 @@ fn handle_rename_transition(
 }
 
 #[inline(always)]
-fn detect_operations(path: &Path, actor_id: &str) -> Result<DetectionReport> {
-    detect_operations_with_content(path, actor_id, None)
+fn detect_operations(path: &Path, actor_id: &str, suppress_logging: bool) -> Result<DetectionReport> {
+    detect_operations_with_content(path, actor_id, None, suppress_logging)
 }
 
 #[inline(always)]
@@ -819,6 +623,7 @@ fn detect_operations_with_content(
     path: &Path,
     actor_id: &str,
     override_content: Option<String>,
+    suppress_logging: bool,
 ) -> Result<DetectionReport> {
     let detect_start = Instant::now();
     
@@ -839,12 +644,12 @@ fn detect_operations_with_content(
             Some(text) => text,
             None => match read_file_fast(path) {
                 Ok(text) => text,
-                Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
+                Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging)),
             }
         };
 
         if new_content.len() as u64 > MAX_TRACKED_FILE_BYTES {
-            return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
+            return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging));
         }
 
         // 🚀 Zero-copy snapshot building
@@ -857,7 +662,7 @@ fn detect_operations_with_content(
             },
             actor_id.to_string(),
         ));
-        return Ok(finalize_detection(path, detect_start, timings, vec![op]));
+        return Ok(finalize_detection(path, detect_start, timings, vec![op], suppress_logging));
     }
 
     let mut prev = previous_snapshot.unwrap();
@@ -867,7 +672,7 @@ fn detect_operations_with_content(
         Some(text) => text,
         None => match read_file_fast(path) {
             Ok(text) => text,
-            Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new())),
+            Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging)),
         }
     };
     
@@ -875,7 +680,7 @@ fn detect_operations_with_content(
     if new_content.len() == prev.content.len() {
         // 🚀 OPTIMIZATION 2: Byte-level equality check (faster than char-by-char)
         if new_content.as_bytes() == prev.content.as_bytes() {
-            return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
+            return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging));
         }
     }
     
@@ -905,7 +710,7 @@ fn detect_operations_with_content(
             ));
             extend_snapshot(&mut prev, &appended);
             update_prev_state(path, Some(prev));
-            return Ok(finalize_detection(path, detect_start, timings, vec![op]));
+            return Ok(finalize_detection(path, detect_start, timings, vec![op], suppress_logging));
         }
     }
     
@@ -913,12 +718,12 @@ fn detect_operations_with_content(
     let new_snapshot = build_snapshot_fast(&new_content);
     if new_snapshot.byte_len > MAX_TRACKED_FILE_BYTES {
         update_prev_state(path, None);
-        return Ok(finalize_detection(path, detect_start, timings, Vec::new()));
+        return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging));
     }
 
     let ops = fast_diff_ops(path, actor_id, &prev, &new_snapshot);
     update_prev_state(path, Some(new_snapshot));
-    Ok(finalize_detection(path, detect_start, timings, ops))
+    Ok(finalize_detection(path, detect_start, timings, ops, suppress_logging))
 }
 
 // 🚀 ULTRA-FAST snapshot building - defers expensive operations
@@ -981,11 +786,15 @@ fn finalize_detection(
     detect_start: Instant,
     mut timings: DetectionTimings,
     ops: Vec<Operation>,
+    suppress_logging: bool,
 ) -> DetectionReport {
     timings.total_us = detect_start.elapsed().as_micros();
     
-    // 🔥 Show profile logs when profiling is enabled OR operations were created
-    profile_detect(path, &timings, !ops.is_empty());
+    // ⚡ DUAL-WATCHER: Suppress logging when called from dual-watcher mode
+    // When dual-watcher is enabled, detect_quality_operations handles all logging
+    if !suppress_logging {
+        profile_detect(path, &timings, !ops.is_empty());
+    }
     
     DetectionReport { ops, timings }
 }

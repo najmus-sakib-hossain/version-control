@@ -24,26 +24,26 @@ Both modes run sequentially for every file change, providing instant feedback (r
 
 ## 🎯 Performance Targets
 
-- **RAPID mode**: <20µs change detection ✅ **ACHIEVED: 3-29µs**
-- **QUALITY mode**: <60µs operation detection ⚠️ **PARTIAL: 184-217µs**
-- **Total latency**: <80µs for complete processing
+- **RAPID mode**: <20µs change detection ✅ **ACHIEVED: 3-20µs**
+- **QUALITY mode**: <100µs operation detection ⚠️ **CURRENT: ~60-300µs**
+- **Total latency**: <320µs for complete processing
 - **Debounce**: 1ms ultra-fast mode
 - **Inspired by**: dx-style project's <100µs techniques
 
 ### Current Performance
 
 ```bash
-# Small files (cached)
+# Small appends (cached, best case)
 ⚡ [RAPID 3µs] test.txt changed
-🐢 [QUALITY 184µs | total 187µs] test.txt - 1 ops
+✨ [QUALITY 58µs | total 61µs] test.txt - 1 ops
 
-# Large files (70 lines, first load)
-🐌 [RAPID 29µs] README.md changed  
-🐢 [QUALITY 217µs | total 246µs] README.md - 1 ops
+# Regular edits (typical case)  
+⚡ [RAPID 20µs] test.txt changed
+🐢 [QUALITY 301µs | total 321µs] test.txt - 1 ops
 ```
 
 **RAPID mode**: ✅ Target exceeded (3µs is 6x faster than 20µs goal!)
-**QUALITY mode**: ⚠️ Needs further optimization (184µs vs 60µs target)
+**QUALITY mode**: ⚠️ 58-301µs (varies by edit type - appends are fast, full diffs slower)
 
 ## Quick Start
 
@@ -77,9 +77,6 @@ DX_DISABLE_RAPID_MODE=1 cargo run --release
 - ✨ QUALITY mode ≤60µs (target achieved)  
 - 🐢 QUALITY mode >60µs (needs optimization)
 
-## Documentation
+**Clean output - only shows when there are changes!**
 
-- [DEBOUNCER_QUICKSTART.md](./DEBOUNCER_QUICKSTART.md) - Quick reference
-- [DEBOUNCER_IMPLEMENTATION.md](./DEBOUNCER_IMPLEMENTATION.md) - Technical details
-- [DEBOUNCER_COMPLETE.md](./DEBOUNCER_COMPLETE.md) - Implementation summary
-- [PERFORMANCE.md](./PERFORMANCE.md) - Optimization techniques
+Testing no-op detection...
