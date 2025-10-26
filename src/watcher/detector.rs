@@ -4,7 +4,6 @@ use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use once_cell::sync::Lazy;
-use rayon::prelude::*;
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -44,6 +43,7 @@ fn path_to_string(path: &Path) -> String {
 /// 🚀 ULTRA-FAST: Check if file changed using ONLY metadata (dx-style, <1µs)
 /// Returns false if file definitely hasn't changed (mtime+size match)
 #[inline(always)]
+#[allow(dead_code)]
 fn file_definitely_changed(path: &Path) -> bool {
     // Quick metadata check only (< 1µs) - NO content hashing!
     let Ok(metadata) = std::fs::metadata(path) else { return true };
@@ -1017,7 +1017,7 @@ fn compute_change_range_fast(
                     .count()
             })
             .enumerate()
-            .find(|(_, prefix_len)| *prefix_len < chunk_size)
+            .find_first(|(_, prefix_len)| *prefix_len < chunk_size)
             .map(|(idx, partial)| idx * chunk_size + partial)
             .unwrap_or(min_len)
     } else {
@@ -1227,7 +1227,7 @@ fn print_operation_diff(ops: &[Operation]) {
             .unwrap_or(&op.file_path);
         
         match &op.op_type {
-            OperationType::Insert { position, content, length } => {
+            OperationType::Insert { position, content, length: _ } => {
                 println!("  {} {} @ {}:{}", 
                     "+".green().bold(),
                     filename.bright_cyan(),
