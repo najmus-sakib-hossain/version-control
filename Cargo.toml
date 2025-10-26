@@ -11,7 +11,7 @@ categories = ["development-tools", "filesystem"]
 
 [[bin]]
 name = "forge-cli"
-path = "examples/cli.rs"
+path = "src/bin/cli.rs"
 required-features = []
 
 [dependencies]

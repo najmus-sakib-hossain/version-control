@@ -1,14 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
+use forge::{context, server, storage, watcher};
 use std::path::PathBuf;
-
-mod context;
-mod crdt;
-mod server;
-mod storage;
-mod sync;
-mod watcher;
 
 #[derive(Parser)]
 #[command(name = "forge")]
