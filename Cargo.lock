@@ -625,6 +625,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "dx-forge"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "automerge",
+ "axum",
+ "bincode",
+ "bytes",
+ "chrono",
+ "clap",
+ "colored",
+ "crossbeam",
+ "dashmap",
+ "futures",
+ "git2",
+ "ignore",
+ "jwalk",
+ "lz4",
+ "memchr",
+ "memmap2",
+ "notify",
+ "notify-debouncer-full",
+ "num_cpus",
+ "once_cell",
+ "parking_lot",
+ "rayon",
+ "reqwest",
+ "ropey",
+ "rusqlite",
+ "serde",
+ "serde_cbor",
+ "serde_json",
+ "sha2 0.10.9",
+ "similar",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tower",
+ "tower-http",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "url",
+ "uuid",
+ "walkdir",
+ "whoami",
+ "windows-sys 0.59.0",
+ "yrs",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -724,57 +775,6 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "forge-watcher"
-version = "0.0.1"
-dependencies = [
- "ahash",
- "anyhow",
- "automerge",
- "axum",
- "bincode",
- "bytes",
- "chrono",
- "clap",
- "colored",
- "crossbeam",
- "dashmap",
- "futures",
- "git2",
- "ignore",
- "jwalk",
- "lz4",
- "memchr",
- "memmap2",
- "notify",
- "notify-debouncer-full",
- "num_cpus",
- "once_cell",
- "parking_lot",
- "rayon",
- "reqwest",
- "ropey",
- "rusqlite",
- "serde",
- "serde_cbor",
- "serde_json",
- "sha2 0.10.9",
- "similar",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tower",
- "tower-http",
- "tree-sitter",
- "tree-sitter-rust",
- "url",
- "uuid",
- "walkdir",
- "whoami",
- "windows-sys 0.59.0",
- "yrs",
-]
 
 [[package]]
 name = "form_urlencoded"
