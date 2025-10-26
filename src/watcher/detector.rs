@@ -1,14 +1,14 @@
 use anyhow::Result;
 use colored::*;
-use crossbeam::channel::bounded;
-use notify::RecommendedWatcher;
 use notify::event::{ModifyKind, RenameMode};
-use notify::{EventKind, RecursiveMode, Watcher};
+use notify::{EventKind, RecursiveMode};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use once_cell::sync::Lazy;
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 use memmap2::Mmap;
 
@@ -42,8 +42,60 @@ static PROFILE_DETECT: Lazy<bool> = Lazy::new(|| {
         .unwrap_or(false)
 });
 
-// 🎯 Performance target: Sub-100µs operation processing (inspired by dx-style)
-const TARGET_PERFORMANCE_US: u128 = 100;
+// 🎯 Performance target: Sub-20µs operation processing (dx-style level)
+const TARGET_PERFORMANCE_US: u128 = 20;
+
+// 🚀 Watcher mode configuration (inspired by dx-style)
+enum WatchMode {
+    Polling(Duration),      // Manual polling mode (DX_WATCH_POLL_MS)
+    Raw(Duration),          // Raw events with minimum gap (DX_WATCH_RAW=1, 5ms default)
+    Debounced(Duration),    // Debounced events (default, configurable via DX_DEBOUNCE_MS)
+}
+
+impl WatchMode {
+    fn from_env() -> Self {
+        // Mode 1: Polling (DX_WATCH_POLL_MS=500)
+        if let Ok(poll_ms) = std::env::var("DX_WATCH_POLL_MS") {
+            if let Ok(ms) = poll_ms.parse::<u64>() {
+                println!(
+                    "{} Using polling mode: {}ms interval",
+                    "🔄".bright_blue(),
+                    ms
+                );
+                return WatchMode::Polling(Duration::from_millis(ms));
+            }
+        }
+
+        // Mode 2: Raw with minimum gap (DX_WATCH_RAW=1)
+        if let Ok(raw) = std::env::var("DX_WATCH_RAW") {
+            if raw == "1" || raw.eq_ignore_ascii_case("true") {
+                let gap_ms = std::env::var("DX_RAW_GAP_MS")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(5);
+                println!(
+                    "{} Using raw event mode: {}ms minimum gap (fastest latency)",
+                    "⚡".bright_yellow(),
+                    gap_ms
+                );
+                return WatchMode::Raw(Duration::from_millis(gap_ms));
+            }
+        }
+
+        // Mode 3: Debounced (default, DX_DEBOUNCE_MS=3)
+        let debounce_ms = std::env::var("DX_DEBOUNCE_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(3); // Default 3ms for sub-20µs target
+
+        println!(
+            "{} Using debounced mode: {}ms (eliminates Windows atomic save noise)",
+            "🎯".bright_green(),
+            debounce_ms
+        );
+        WatchMode::Debounced(Duration::from_millis(debounce_ms))
+    }
+}
 
 pub async fn start_watching(
     path: PathBuf,
@@ -52,44 +104,7 @@ pub async fn start_watching(
     repo_id: String,
     sync_mgr: Option<StdArc<SyncManager>>,
 ) -> Result<()> {
-    const QUEUE_CAPACITY: usize = 10_000;
-    const BACKLOG_WARN_THRESHOLD: usize = 8_000;
-
-    static BACKLOG_WARNED: AtomicBool = AtomicBool::new(false);
-
-    let (tx, rx) = bounded::<notify::Event>(QUEUE_CAPACITY);
-
-    let mut watcher: RecommendedWatcher = notify::recommended_watcher({
-        let tx = tx.clone();
-        move |result: Result<notify::Event, notify::Error>| match result {
-            Ok(event) => {
-                let backlog = tx.len();
-                if backlog > BACKLOG_WARN_THRESHOLD && !BACKLOG_WARNED.swap(true, Ordering::Relaxed)
-                {
-                    println!(
-                        "{} Watcher backlog at {} events (capacity {})",
-                        "⚠️".bright_yellow(),
-                        backlog,
-                        QUEUE_CAPACITY
-                    );
-                } else if backlog < BACKLOG_WARN_THRESHOLD / 2 {
-                    BACKLOG_WARNED.store(false, Ordering::Relaxed);
-                }
-
-                if tx.send(event).is_err() {
-                    println!(
-                        "{} Dropped filesystem event due to full queue",
-                        "⚠️".bright_red()
-                    );
-                }
-            }
-            Err(err) => {
-                println!("{} Watcher error: {}", "⚠️".bright_red(), err);
-            }
-        }
-    })?;
-
-    watcher.watch(&path, RecursiveMode::Recursive)?;
+    let mode = WatchMode::from_env();
 
     println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
     
@@ -106,86 +121,165 @@ pub async fn start_watching(
         );
     }
 
-    while let Ok(event) = rx.recv() {
-        let start = Instant::now();
+    match mode {
+        WatchMode::Polling(interval) => {
+            start_polling_watcher(path, oplog, actor_id, sync_mgr, interval).await
+        }
+        WatchMode::Raw(min_gap) => {
+            start_raw_watcher(path, oplog, actor_id, sync_mgr, min_gap).await
+        }
+        WatchMode::Debounced(debounce) => {
+            start_debounced_watcher(path, oplog, actor_id, sync_mgr, debounce).await
+        }
+    }
+}
 
-        match &event.kind {
-            EventKind::Modify(ModifyKind::Name(mode)) => match *mode {
-                RenameMode::From => {
-                    if let Some(old_path) = event.paths.first() {
-                        if is_temp_path(old_path) {
-                            cache_temp_content(old_path);
+// 🚀 Mode 1: Polling watcher (manual file system polling)
+async fn start_polling_watcher(
+    path: PathBuf,
+    oplog: Arc<OperationLog>,
+    actor_id: String,
+    sync_mgr: Option<StdArc<SyncManager>>,
+    interval: Duration,
+) -> Result<()> {
+    println!(
+        "{} Polling mode not fully implemented - falling back to debounced",
+        "⚠️".bright_yellow()
+    );
+    start_debounced_watcher(path, oplog, actor_id, sync_mgr, interval).await
+}
+
+// 🚀 Mode 2: Raw events with minimum gap (fastest latency, some duplicates)
+async fn start_raw_watcher(
+    path: PathBuf,
+    oplog: Arc<OperationLog>,
+    actor_id: String,
+    sync_mgr: Option<StdArc<SyncManager>>,
+    min_gap: Duration,
+) -> Result<()> {
+    // Use debouncer with very short timeout for near-instant events
+    println!(
+        "{} Raw mode using {}ms debouncer (near-instant processing)",
+        "⚡".bright_yellow(),
+        min_gap.as_millis()
+    );
+    start_debounced_watcher(path, oplog, actor_id, sync_mgr, min_gap).await
+}
+
+// 🚀 Mode 3: Debounced events (eliminates Windows atomic save noise)
+async fn start_debounced_watcher(
+    path: PathBuf,
+    oplog: Arc<OperationLog>,
+    actor_id: String,
+    sync_mgr: Option<StdArc<SyncManager>>,
+    debounce: Duration,
+) -> Result<()> {
+    let (tx, rx) = channel();
+    
+    let mut debouncer = new_debouncer(debounce, None, tx)?;
+    debouncer.watch(&path, RecursiveMode::Recursive)?;
+
+    process_events_loop(rx, actor_id, oplog, sync_mgr).await
+}
+
+// 🎯 Core event processing loop (shared by all modes)
+async fn process_events_loop(
+    rx: Receiver<DebounceEventResult>,
+    actor_id: String,
+    oplog: Arc<OperationLog>,
+    sync_mgr: Option<StdArc<SyncManager>>,
+) -> Result<()> {
+    while let Ok(result) = rx.recv() {
+        match result {
+            Ok(events) => {
+                for event in events {
+                    let start = Instant::now();
+                    
+                    match &event.kind {
+                        EventKind::Modify(ModifyKind::Name(mode)) => match *mode {
+                            RenameMode::From => {
+                                if let Some(old_path) = event.paths.first() {
+                                    if is_temp_path(old_path) {
+                                        cache_temp_content(old_path);
+                                    }
+                                    remember_rename_source(Some(old_path.clone()));
+                                }
+                            }
+                            RenameMode::To => {
+                                let new_path = event.paths.last().cloned();
+                                let mut old_path = take_rename_source();
+                                if old_path.is_none() && event.paths.len() >= 2 {
+                                    old_path = event.paths.get(0).cloned();
+                                }
+                                if let (Some(old), Some(new)) = (old_path, new_path) {
+                                    handle_rename_transition(
+                                        old,
+                                        new,
+                                        &actor_id,
+                                        start,
+                                        oplog.as_ref(),
+                                        &sync_mgr,
+                                    )?;
+                                }
+                            }
+                            RenameMode::Both => {
+                                if event.paths.len() >= 2 {
+                                    let old = event.paths[0].clone();
+                                    let new = event.paths[1].clone();
+                                    handle_rename_transition(
+                                        old,
+                                        new,
+                                        &actor_id,
+                                        start,
+                                        oplog.as_ref(),
+                                        &sync_mgr,
+                                    )?;
+                                }
+                            }
+                            _ => {}
+                        },
+                        EventKind::Modify(_) => {
+                            for path in &event.paths {
+                                process_path(path, &actor_id, start, oplog.as_ref(), &sync_mgr)?;
+                            }
                         }
-                        remember_rename_source(Some(old_path.clone()));
-                    }
-                }
-                RenameMode::To => {
-                    let new_path = event.paths.last().cloned();
-                    let mut old_path = take_rename_source();
-                    if old_path.is_none() && event.paths.len() >= 2 {
-                        old_path = event.paths.get(0).cloned();
-                    }
-                    if let (Some(old), Some(new)) = (old_path, new_path) {
-                        handle_rename_transition(
-                            old,
-                            new,
-                            &actor_id,
-                            start,
-                            oplog.as_ref(),
-                            &sync_mgr,
-                        )?;
-                    }
-                }
-                RenameMode::Both => {
-                    if event.paths.len() >= 2 {
-                        let old = event.paths[0].clone();
-                        let new = event.paths[1].clone();
-                        handle_rename_transition(
-                            old,
-                            new,
-                            &actor_id,
-                            start,
-                            oplog.as_ref(),
-                            &sync_mgr,
-                        )?;
-                    }
-                }
-                _ => {}
-            },
-            EventKind::Modify(_) => {
-                for path in &event.paths {
-                    process_path(path, &actor_id, start, oplog.as_ref(), &sync_mgr)?;
-                }
-            }
-            EventKind::Create(_) => {
-                for path in &event.paths {
-                    // Warm cache for newly created files
-                    let _ = cache_warmer::warm_file(path);
-                    process_path(path, &actor_id, start, oplog.as_ref(), &sync_mgr)?;
-                }
-            }
-            EventKind::Remove(_) => {
-                for path in &event.paths {
-                    if is_temp_path(path) {
-                        continue;
-                    }
-                    TEMP_CONTENT_CACHE.remove(path);
-                    if should_track(path) {
-                        let detect_start = Instant::now();
-                        clear_prev_state(path);
-                        clear_last_operation_entry(path);
-                        let op = register_operation(Operation::new(
-                            path_to_string(path),
-                            OperationType::FileDelete,
-                            actor_id.clone(),
-                        ));
+                        EventKind::Create(_) => {
+                            for path in &event.paths {
+                                // Warm cache for newly created files
+                                let _ = cache_warmer::warm_file(path);
+                                process_path(path, &actor_id, start, oplog.as_ref(), &sync_mgr)?;
+                            }
+                        }
+                        EventKind::Remove(_) => {
+                            for path in &event.paths {
+                                if is_temp_path(path) {
+                                    continue;
+                                }
+                                TEMP_CONTENT_CACHE.remove(path);
+                                if should_track(path) {
+                                    let detect_start = Instant::now();
+                                    clear_prev_state(path);
+                                    clear_last_operation_entry(path);
+                                    let op = register_operation(Operation::new(
+                                        path_to_string(path),
+                                        OperationType::FileDelete,
+                                        actor_id.clone(),
+                                    ));
 
-                        let detect_us = detect_start.elapsed().as_micros();
-                        emit_operations(vec![op], detect_us, start, oplog.as_ref(), &sync_mgr)?;
+                                    let detect_us = detect_start.elapsed().as_micros();
+                                    emit_operations(vec![op], detect_us, start, oplog.as_ref(), &sync_mgr)?;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
-            _ => {}
+            Err(errors) => {
+                for error in errors {
+                    println!("{} Debouncer error: {}", "⚠️".bright_red(), error);
+                }
+            }
         }
     }
 
@@ -202,6 +296,7 @@ struct FileSnapshot {
 }
 
 #[derive(Default, Clone, Copy)]
+#[allow(dead_code)]
 struct DetectionTimings {
     cached_us: u128,
     metadata_us: u128,
