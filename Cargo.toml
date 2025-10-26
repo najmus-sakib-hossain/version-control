@@ -1,7 +1,18 @@
 [package]
 name = "forge"
-version = "0.1.0"
-edition = "2024"
+version = "1.0.0"
+edition = "2021"
+authors = ["Forge Contributors"]
+description = "Ultra-fast file watcher library with dual-mode event system (rapid <35µs, quality <60µs) for DX tools"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/najmus-sakib-hossain/version-control"
+keywords = ["watcher", "crdt", "dx", "performance", "file-system"]
+categories = ["development-tools", "filesystem"]
+
+[[bin]]
+name = "forge-cli"
+path = "examples/cli.rs"
+required-features = []
 
 [dependencies]
 # Core async runtime

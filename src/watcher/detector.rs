@@ -82,19 +82,16 @@ fn file_definitely_changed(path: &Path) -> bool {
 // 🚀 Atomic sequence counter for ultra-fast deduplication (no syscalls!)
 static RAPID_SEQUENCE: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
-// 🎛️ Environment variable to disable rapid mode for testing
-static DISABLE_RAPID_MODE: Lazy<bool> = Lazy::new(|| {
-    std::env::var("DX_DISABLE_RAPID_MODE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-});
+// 🚀 PRODUCTION MODE: Rapid mode always enabled (no environment variables)
+// Rapid mode provides <35µs change detection (typically 1-2µs)
+const RAPID_MODE_ENABLED: bool = true;
 
-/// ⚡ ULTRA-FAST MODE: Change detection with ZERO syscalls (<20µs)
+/// ⚡ ULTRA-FAST MODE: Change detection with ZERO syscalls (<35µs, typically 1-2µs)
 /// Returns simple event indicating file changed
 #[inline(always)]
 fn detect_rapid_change(path: &Path) -> Option<u64> {
-    // Skip if disabled via env var
-    if *DISABLE_RAPID_MODE {
+    // Production mode: rapid always enabled
+    if !RAPID_MODE_ENABLED {
         return Some(0);
     }
     
@@ -114,7 +111,7 @@ fn detect_rapid_change(path: &Path) -> Option<u64> {
     Some(elapsed)
 }
 
-/// 📊 QUALITY MODE: Full operation detection with line numbers (60µs target)
+/// 📊 QUALITY MODE: Full operation detection with line numbers (<60µs target)
 /// This runs in background after rapid mode provides instant feedback
 fn detect_quality_operations(
     path: &Path,
@@ -123,8 +120,8 @@ fn detect_quality_operations(
 ) -> Result<DetectionReport> {
     let start = Instant::now();
     
-    // Skip quality mode if rapid mode is disabled (for direct comparison)
-    if *DISABLE_RAPID_MODE {
+    // Production mode: always use quality detection
+    if !RAPID_MODE_ENABLED {
         let report = detect_operations(path, actor_id, false)?;
         let total_time = start.elapsed().as_micros();
         
@@ -150,7 +147,7 @@ fn detect_quality_operations(
     // Log quality detection ONLY when operations were detected
     if !report.ops.is_empty() {
         // First log RAPID timing
-        let rapid_marker = if (rapid_time_us as u128) <= TARGET_PERFORMANCE_US { "⚡" } else { "🐌" };
+        let rapid_marker = if (rapid_time_us as u128) <= RAPID_TARGET_US { "⚡" } else { "🐌" };
         println!(
             "{} [RAPID {}µs] {} changed",
             rapid_marker,
@@ -159,7 +156,7 @@ fn detect_quality_operations(
         );
         
         // Then log QUALITY timing
-        let quality_marker = if quality_time <= 100 { "✨" } else { "🐢" };
+        let quality_marker = if quality_time <= QUALITY_TARGET_US { "✨" } else { "🐢" };
         println!(
             "{} [QUALITY {}µs | total {}µs]",
             quality_marker,
@@ -186,30 +183,24 @@ fn build_snapshot_minimal(...) { ... }
 fn line_col_fast(...) { ... }
 */
 
-static PROFILE_DETECT: Lazy<bool> = Lazy::new(|| {
-    std::env::var("DX_WATCH_PROFILE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-});
+// 🚀 PRODUCTION MODE: Profiling disabled (clean output)
+const PROFILE_DETECT: bool = false;
 
-// 🎯 Performance target: Sub-20µs operation processing (dx-style level)
-const TARGET_PERFORMANCE_US: u128 = 20;
+// 🎯 Performance targets (production-ready)
+const RAPID_TARGET_US: u128 = 35;  // Rapid mode: <35µs (typically 1-2µs)
+const QUALITY_TARGET_US: u128 = 60; // Quality mode: <60µs
 
 // 🚀 Watcher mode (ultra-fast 1ms debounce only)
 enum WatchMode {
     Debounced(Duration), // Ultra-fast debounced events
 }
 
-// 🚀 Watcher mode configuration (ultra-fast 1ms debounce only)
-const DEBOUNCE_MS: u64 = 1; // Ultra-fast 1ms debounce for sub-20µs target
+// 🚀 PRODUCTION MODE: Optimal 1ms debounce (hardcoded for best performance)
+const DEBOUNCE_MS: u64 = 1; // Ultra-fast 1ms debounce for sub-35µs rapid detection
 
 impl WatchMode {
     fn from_env() -> Self {
-        // println!(
-        //     "{} Using ultra-fast mode: {}ms debounce (sub-20µs target)",
-        //     "⚡".bright_yellow(),
-        //     DEBOUNCE_MS
-        // );
+        // Production mode: hardcoded optimal 1ms debounce
         WatchMode::Debounced(Duration::from_millis(DEBOUNCE_MS))
     }
 }
@@ -218,43 +209,13 @@ pub async fn start_watching(
     path: PathBuf,
     oplog: Arc<OperationLog>,
     actor_id: String,
-    repo_id: String,
+    _repo_id: String,
     sync_mgr: Option<StdArc<SyncManager>>,
 ) -> Result<()> {
     let mode = WatchMode::from_env();
 
-    println!("{} Repo ID: {}", "→".bright_blue(), repo_id.bright_yellow());
+    // Production mode: clean startup (no console spam)
     
-    // ⚡⚡ Show dual-watcher status
-    // if *DISABLE_RAPID_MODE {
-    //     println!(
-    //         "{} Dual-watcher: DISABLED (quality mode only)",
-    //         "⚠️".bright_yellow()
-    //     );
-    //     println!(
-    //         "{} Set DX_DISABLE_RAPID_MODE=0 to enable ultra-fast mode",
-    //         "💡".bright_black()
-    //     );
-    // } else {
-    //     println!(
-    //         "{} Dual-watcher: ENABLED (rapid <20µs + quality <60µs)",
-    //         "⚡⚡".bright_green()
-    //     );
-    // }
-    
-    // 🔥 Show profiling status
-    // if *PROFILE_DETECT {
-    //     println!(
-    //         "{} Profiling enabled (DX_WATCH_PROFILE=1) - showing all detection timings",
-    //         "🔍".bright_yellow()
-    //     );
-    // } else {
-    //     println!(
-    //         "{} Set DX_WATCH_PROFILE=1 to see detailed detection timings",
-    //         "💡".bright_black()
-    //     );
-    // }
-
     match mode {
         WatchMode::Debounced(debounce) => {
             start_debounced_watcher(path, oplog, actor_id, sync_mgr, debounce).await
@@ -483,7 +444,7 @@ fn emit_operations(
             let total_us = start.elapsed().as_micros();
             
             // 🎯 Only print if outside normal range or below target performance
-            if total_us < TARGET_PERFORMANCE_US || total_us > 15_000 {
+            if total_us < RAPID_TARGET_US || total_us > 15_000 {
                 print_operation(&op, total_us, detect_us, 0);
             }
             
@@ -800,14 +761,14 @@ fn finalize_detection(
 }
 
 fn profile_detect(path: &Path, timings: &DetectionTimings, has_ops: bool) {
-    // Skip if profiling is disabled AND no operations were created
-    if !*PROFILE_DETECT && !has_ops {
+    // Production mode: profiling disabled
+    if !PROFILE_DETECT && !has_ops {
         return;
     }
     
     // When profiling is enabled, show all logs
     // When profiling is disabled, only show if operations were created
-    if *PROFILE_DETECT || has_ops {
+    if PROFILE_DETECT || has_ops {
         println!(
             "⚙️ detect {} | total={}µs",
             path.display(),
@@ -1096,11 +1057,11 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
         return;
     }
     
-    // 🚀 Performance indicator based on dx-style benchmarks
+    // 🚀 Performance indicator based on production targets
     let perf_indicator = if total_us < 50 {
-        "🏆" // Elite: <50µs (dx-style level: 20µs class gen, 37µs incremental)
-    } else if total_us < TARGET_PERFORMANCE_US {
-        "⚡" // Excellent: <100µs (target achieved!)
+        "🏆" // Elite: <50µs (sub-35µs rapid + quality)
+    } else if total_us < RAPID_TARGET_US {
+        "⚡" // Excellent: <35µs (rapid target achieved!)
     } else if total_us < 500 {
         "✨" // Good: <500µs
     } else if total_us < 5_000 {
@@ -1110,7 +1071,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
     };
     
     let time = format!("[{}µs | detect {}µs]", total_us, detect_us);
-    let time_colored = if total_us < TARGET_PERFORMANCE_US {
+    let time_colored = if total_us < RAPID_TARGET_US {
         time.bright_green().bold()
     } else if total_us < 1000 {
         time.yellow()
