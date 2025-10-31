@@ -1,163 +1,161 @@
-# Forge - Production-Ready File Watcher Library# Forge - Ultra-Fast CRDT Version Control
+# Forge - Ultra-Fast CRDT Version Control
 
-Ultra-fast file watcher library with dual-mode event system optimized for DX tools.Operation-level version control powered by CRDTs. Forge tracks file edits as fine-grained operations, persists them in a local DeltaDB, and keeps peers in sync over WebSockets.
+Ultra-fast file watcher library with dual-mode event system optimized for DX tools. Operation-level version control powered by CRDTs. Forge tracks file edits as fine-grained operations, persists them in a local DeltaDB, and keeps peers in sync over WebSockets.
 
-## ✨ Features## ⚡⚡ Dual-Watcher Architecture
+## ⚡⚡ Dual-Watcher Architecture
 
-- **⚡ Rapid Events**: <35µs ultra-fast change notifications (typically 1-2µs)Forge uses a **dual-watcher system** for maximum performance and quality:
+Forge uses a **dual-watcher system** for maximum performance and quality:
 
-- **📊 Quality Events**: <60µs full operation detection with line numbers and diffs  
+### 🚀 Mode 1: RAPID Detection (<20µs)
 
-- **🚀 Production Ready**: Zero environment variables, optimal hardcoded settings### 🚀 Mode 1: RAPID Detection (<20µs)
-
-- **🔧 CRDT-based**: Conflict-free replicated data types for distributed sync
-
-- **💾 Memory-mapped I/O**: Leverages OS page cache for sub-microsecond reads- **Zero syscalls** - Uses atomic sequence counter (no time calls!)
-
-- **🎯 DX-focused**: Built specifically as a base for developer experience tools- **No file operations** - Skips metadata, mtime, and content reads
-
+- **Zero syscalls** - Uses atomic sequence counter (no time calls!)
+- **No file operations** - Skips metadata, mtime, and content reads
 - **Instant feedback** - Ultra-fast change logging
+- **Target: <20µs** - Ultra-fast notification system
 
-## 🚀 Quick Start- **Target: <20µs** - Ultra-fast notification system
+### 📊 Mode 2: QUALITY Detection (<60µs)
 
-### As a Library Dependency### 📊 Mode 2: QUALITY Detection (<60µs)
-
-Add to your `Cargo.toml`:- **Full file analysis** - Complete operation detection with line numbers
-
+- **Full file analysis** - Complete operation detection with line numbers
 - **Rich metadata** - Diffs, timestamps, and sync details
+- **Background execution** - Runs after rapid mode
+- **Target: <60µs** - Fast detailed analysis
 
-```toml- **Background execution** - Runs after rapid mode
+Both modes run sequentially for every file change, providing instant feedback (rapid) followed by complete details (quality).
 
-[dependencies]- **Target: <60µs** - Fast detailed analysis
+## ✨ Features
 
-forge = "1.0"
-
-tokio = { version = "1.48", features = ["full"] }Both modes run sequentially for every file change, providing instant feedback (rapid) followed by complete details (quality).
-
-```
+- **⚡ Rapid Events**: <35µs ultra-fast change notifications (typically 1-2µs)
+- **📊 Quality Events**: <60µs full operation detection with line numbers and diffs
+- **🚀 Production Ready**: Zero environment variables, optimal hardcoded settings
+- **🔧 CRDT-based**: Conflict-free replicated data types for distributed sync
+- **💾 Memory-mapped I/O**: Leverages OS page cache for sub-microsecond reads
+- **🎯 DX-focused**: Built specifically as a base for developer experience tools
 
 ## 🎯 Performance Targets
 
-### Basic Usage
-
 - **RAPID mode**: <20µs change detection ✅ **ACHIEVED: 3-20µs**
-
-```rust- **QUALITY mode**: <100µs operation detection ⚠️ **CURRENT: ~60-300µs**
-
-use forge::{ForgeWatcher, ForgeEvent};- **Total latency**: <320µs for complete processing
-
+- **QUALITY mode**: <100µs operation detection ⚠️ **CURRENT: ~60-300µs**
+- **Total latency**: <320µs for complete processing
 - **Debounce**: 1ms ultra-fast mode
+- **Inspired by**: dx-style project's <100µs techniques
 
-#[tokio::main]- **Inspired by**: dx-style project's <100µs techniques
+### Current Performance
 
-async fn main() -> anyhow::Result<()> {
+**RAPID mode**: ✅ Target exceeded (3µs is 6x faster than 20µs goal!)
+**QUALITY mode**: ⚠️ 58-301µs (varies by edit type - appends are fast, full diffs slower)
 
-    // Create watcher for current directory### Current Performance
+```bash
+# Small appends (cached, best case)
+⚡ [RAPID 3µs] test.txt changed
+✨ [QUALITY 58µs | total 61µs] test.txt - 1 ops
 
-    let watcher = ForgeWatcher::new(".", false, vec![]).await?;
-
+# Regular edits (typical case)
+⚡ [RAPID 20µs] test.txt changed
+🐢 [QUALITY 301µs | total 321µs] test.txt - 1 ops
 ```
 
-    ```bash
+## 🚀 Quick Start
 
-    // Run the watcher# Small appends (cached, best case)
+### As a Library Dependency
 
-    watcher.run().await?;⚡ [RAPID 3µs] test.txt changed
+Add to your `Cargo.toml`:
 
-    ✨ [QUALITY 58µs | total 61µs] test.txt - 1 ops
+```toml
+[dependencies]
+forge = "1.0"
+tokio = { version = "1.48", features = ["full"] }
+```
 
+### Basic Usage
+
+```rust
+use forge::{ForgeWatcher, ForgeEvent};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Create watcher for current directory
+    let watcher = ForgeWatcher::new(".", false, vec![]).await?;
+
+    // Run the watcher
+    watcher.run().await?;
     Ok(())
+}
+```
 
-}# Regular edits (typical case)  
+### Running Examples
 
-```⚡ [RAPID 20µs] test.txt changed
-
-🐢 [QUALITY 301µs | total 321µs] test.txt - 1 ops
-
-### Running Examples```
-
-
-
-```bash**RAPID mode**: ✅ Target exceeded (3µs is 6x faster than 20µs goal!)
-
-## Simple watcher example**QUALITY mode**: ⚠️ 58-301µs (varies by edit type - appends are fast, full diffs slower)
-
+```bash
+# Simple watcher example
 cargo run --release --example simple
 
-## Quick Start
+# Full CLI with all features
+cargo run --release --bin forge
+```
 
-## Full CLI with all features
-
-cargo run --release --bin forge```bash
-
-```# Default mode (dual-watcher enabled)
-
+```bash
+# Default mode (dual-watcher enabled)
 cargo run --release
+
+# Enable profiling to see timings
+DX_WATCH_PROFILE=1 cargo run --release
+
+# Disable rapid mode (quality only, for testing)
+DX_DISABLE_RAPID_MODE=1 cargo run --release
+```
 
 ## 🎯 Dual-Event System
 
-# Enable profiling to see timings
+Forge emits **two types of events** for every file change:
 
-Forge emits **two types of events** for every file change:DX_WATCH_PROFILE=1 cargo run --release
-
-
-
-### 1. ⚡ Rapid Event (<35µs)# Disable rapid mode (quality only, for testing)
-
-DX_DISABLE_RAPID_MODE=1 cargo run --release
+### 1. ⚡ Rapid Event (<35µs)
 
 Ultra-fast notification using zero syscalls:
 
-- **Timing**: Typically 1-2µs, max 35µs# Example output:
+- **Timing**: Typically 1-2µs, max 35µs
+- **Purpose**: Instant UI feedback for formatters/linters
+- **Method**: Atomic sequence counter (no file I/O)
+- **Data**: File path + timing only
 
-- **Purpose**: Instant UI feedback for formatters/linters# ⚡ [RAPID 8µs] README.md changed
+### 2. ✨ Quality Event (<60µs)
 
-- **Method**: Atomic sequence counter (no file I/O)# ✨ [QUALITY 52µs | total 60µs] README.md - 1 ops
-
-- **Data**: File path + timing only```
-
-
-
-### 2. ✨ Quality Event (<60µs)  ## Configuration
-
-
-
-Complete operation detection with details:### Environment Variables
+Complete operation detection with details:
 
 - **Timing**: Typically <60µs
+- **Purpose**: Full analysis for quality tools
+- **Method**: Memory-mapped I/O + SIMD diffs
+- **Data**: Operations, line numbers, content changes
 
-- **Purpose**: Full analysis for quality tools- `DX_WATCH_PROFILE=1` - Show detailed timing for both modes
+## Configuration
 
-- **Method**: Memory-mapped I/O + SIMD diffs- `DX_DISABLE_RAPID_MODE=1` - Disable rapid mode (quality only)
+### Environment Variables
 
-- **Data**: Operations, line numbers, content changes- `DX_DEBOUNCE_MS=1` - Debounce interval (default: 1ms)
+- `DX_WATCH_PROFILE=1` - Show detailed timing for both modes
+- `DX_DISABLE_RAPID_MODE=1` - Disable rapid mode (quality only)
+- `DX_DEBOUNCE_MS=1` - Debounce interval (default: 1ms)
 
+### Performance Markers
 
-
-## 📊 Performance Benchmarks### Performance Markers
-
-
-
-```- ⚡ RAPID mode ≤20µs (target achieved)
-
-Rapid Mode (Change Detection):- 🐌 RAPID mode >20µs (needs optimization)
-
-  ⚡ Best case:  1-2µs  (cached, atomic only)- ✨ QUALITY mode ≤60µs (target achieved)  
-
-  ⚡ Typical:    8-20µs (95th percentile)- 🐢 QUALITY mode >60µs (needs optimization)
-
-  🎯 Target:    <35µs  ✅ ACHIEVED
+- ⚡ RAPID mode ≤20µs (target achieved)
+- 🐌 RAPID mode >20µs (needs optimization)
+- ✨ QUALITY mode ≤60µs (target achieved)
+- 🐢 QUALITY mode >60µs (needs optimization)
 
 **Clean output - only shows when there are changes!**
 
+Testing no-op detection...
+
+## 📊 Performance Benchmarks
+
+Rapid Mode (Change Detection):
+  ⚡ Best case:  1-2µs  (cached, atomic only)
+  ⚡ Typical:    8-20µs (95th percentile)
+  🎯 Target:    <35µs  ✅ ACHIEVED
+
 Quality Mode (Full Analysis):
-
-  ✨ Best case:  58µs   (simple append)Testing no-op detection...
-
+  ✨ Best case:  58µs   (simple append)
   ✨ Typical:    60µs   (typical edits)
   🐢 Worst case: 301µs  (complex diffs)
   🎯 Target:    <60µs  ⚠️ MOSTLY ACHIEVED
-```
 
 ### Example Output
 
@@ -224,8 +222,7 @@ Perfect for building DX tools that need:
 ```rust
 use forge::{ForgeWatcher, Operation, OperationType};
 
-## [tokio::main]
-
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let watcher = ForgeWatcher::new("./src", false, vec![]).await?;
 
@@ -244,8 +241,7 @@ async fn main() -> anyhow::Result<()> {
 ```rust
 use forge::ForgeWatcher;
 
-## [tokio::main]
-
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Enable sync with remote peer
     let watcher = ForgeWatcher::new(
@@ -301,4 +297,4 @@ Performance techniques inspired by:
 
 ---
 
-**Built with ❤️ for the DX community**
+Built with ❤️ for the DX community
