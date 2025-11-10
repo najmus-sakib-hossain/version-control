@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use sha2::{Sha256, Digest};
+use sha2::Sha256;
 
 use super::blob::Blob;
 

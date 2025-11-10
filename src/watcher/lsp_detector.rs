@@ -8,7 +8,7 @@
 /// - Better integration with editor features
 /// - Reduced CPU usage
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -61,6 +61,7 @@ pub struct LspPosition {
 
 /// LSP-based change detector
 pub struct LspDetector {
+    #[allow(dead_code)]
     repo_root: PathBuf,
     oplog: Arc<OperationLog>,
     actor_id: String,

@@ -1,0 +1,5 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running `target\debug\examples\web_ui.exe`
+🚀 Forge Web UI running at http://127.0.0.1:3000
+📁 Serving: examples/forge-demo
+🌐 Open your browser to explore files!

@@ -316,7 +316,7 @@ pub enum UpdateResult {
 }
 
 /// Simple merge strategy (placeholder for production 3-way merge)
-fn merge_contents(local: &str, remote: &str) -> Result<String> {
+fn merge_contents(_local: &str, remote: &str) -> Result<String> {
     // Simplified: If no direct conflicts, use remote
     // In production, implement proper 3-way merge with BASE content
     Ok(remote.to_string())

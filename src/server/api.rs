@@ -336,7 +336,8 @@ async fn upload_blob(
         .ok_or_else(|| ApiError::BadRequest("R2 storage not configured".to_string()))?;
     
     // Decode base64 content
-    let content = base64::decode(&req.content)
+    use base64::Engine;
+    let content = base64::engine::general_purpose::STANDARD.decode(&req.content)
         .map_err(|e| ApiError::BadRequest(format!("Invalid base64: {}", e)))?;
     
     let blob = Blob::from_content(&req.path, content);
@@ -424,8 +425,9 @@ async fn batch_upload(
     let mut uploaded = Vec::new();
     let mut failed = Vec::new();
     
+    use base64::Engine;
     for blob_req in req.blobs {
-        match base64::decode(&blob_req.content) {
+        match base64::engine::general_purpose::STANDARD.decode(&blob_req.content) {
             Ok(content) => {
                 let blob = Blob::from_content(&blob_req.path, content);
                 let hash = blob.hash().to_string();
