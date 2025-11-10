@@ -1,13 +1,18 @@
 [package]
 name = "dx-forge"
-version = "0.0.1"
-edition = "2024"
-authors = ["Forge Contributors"]
-description = "Ultra-fast file watcher library with dual-mode event system (rapid <35µs, quality <60µs) for DX tools"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["DX Team <team@dx.tools>"]
+description = "Production-ready VCS and orchestration engine for DX tools ecosystem with LSP integration, traffic branch system, and zero node_modules architecture"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/najmus-sakib-hossain/version-control"
-keywords = ["watcher", "crdt", "dx", "performance", "file-system"]
-categories = ["development-tools", "filesystem"]
+repository = "https://github.com/najmus-sakib-hossain/forge"
+documentation = "https://docs.rs/dx-forge"
+homepage = "https://dx.tools/forge"
+readme = "README.md"
+keywords = ["vcs", "orchestration", "lsp", "dx", "tools"]
+categories = ["development-tools", "filesystem", "command-line-utilities"]
+exclude = ["examples/", "target/", ".git/"]
 
 [[bin]]
 name = "forge-cli"
