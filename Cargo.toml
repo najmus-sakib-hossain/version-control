@@ -98,6 +98,12 @@ sha2 = "0.10.9"
 whoami = "1.5.2"
 windows-sys = { version = "0.59.0", features = ["Win32_Storage_FileSystem"] }
 
+# R2 Storage & API
+base64 = "0.22.1"
+hex = "0.4.3"
+hmac = "0.12.1"
+dotenvy = "0.15.7"
+
 [dev-dependencies]
 tempfile = "3.10.1"
 

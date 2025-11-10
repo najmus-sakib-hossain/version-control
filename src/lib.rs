@@ -44,6 +44,7 @@ pub mod watcher;
 pub use crdt::{Operation, OperationType, Position};
 pub use watcher::{ForgeEvent, ForgeWatcher, RapidChange, QualityChange};
 pub use storage::{Database, OperationLog};
+pub use context::{ComponentStateManager, TrafficBranch, UpdateResult};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

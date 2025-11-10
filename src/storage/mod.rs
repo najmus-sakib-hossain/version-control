@@ -1,6 +1,8 @@
 pub mod db;
 pub mod git_interop;
 pub mod oplog;
+pub mod blob;
+pub mod r2;
 
 use anyhow::Result;
 use colored::*;
@@ -9,6 +11,8 @@ use std::path::Path;
 
 pub use db::Database;
 pub use oplog::OperationLog;
+pub use blob::{Blob, BlobMetadata, BlobRepository};
+pub use r2::{R2Config, R2Storage, batch_upload_blobs};
 
 const FORGE_DIR: &str = ".dx/forge";
 

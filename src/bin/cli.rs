@@ -141,6 +141,41 @@ enum Commands {
         #[arg(short, long)]
         timestamp: Option<String>,
     },
+
+    /// Update DX-managed components
+    Update {
+        /// Component to update (or "all")
+        component: Option<String>,
+
+        /// Force update (skip conflict checks)
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// List managed DX components
+    Components {
+        /// Show component details
+        #[arg(long)]
+        verbose: bool,
+    },
+
+    /// Register a component for tracking
+    Register {
+        /// Path to component file
+        path: PathBuf,
+
+        /// Component source (e.g., "dx-ui")
+        #[arg(long)]
+        source: String,
+
+        /// Component name (e.g., "Button")
+        #[arg(long)]
+        name: String,
+
+        /// Component version
+        #[arg(long)]
+        version: String,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
@@ -245,6 +280,114 @@ async fn main() -> Result<()> {
 
         Commands::TimeTravel { file, timestamp } => {
             storage::time_travel(&file, timestamp).await?;
+        }
+
+        Commands::Update { component, force } => {
+            use dx_forge::context::ComponentStateManager;
+            
+            let forge_dir = std::env::current_dir()?.join(".dx/forge");
+            let mut state_mgr = ComponentStateManager::new(&forge_dir)?;
+            
+            if let Some(comp_name) = component {
+                if comp_name == "all" {
+                    println!("{}", "🔄 Updating all components...".cyan().bold());
+                    let components = state_mgr.list_components();
+                    for comp in components {
+                        println!("\n{} Checking {}...", "→".bright_black(), comp.name.bright_cyan());
+                        // In production, fetch remote version and apply update
+                        println!("   {} (placeholder - would fetch and update)", "→".bright_black());
+                    }
+                } else {
+                    println!(
+                        "{}",
+                        format!("🔄 Updating component: {}...", comp_name).cyan().bold()
+                    );
+                    // In production, fetch remote version and apply update
+                    println!("   {} (placeholder - would fetch and update)", "→".bright_black());
+                }
+            } else {
+                println!(
+                    "{}",
+                    "Please specify a component name or 'all'".yellow()
+                );
+            }
+        }
+
+        Commands::Components { verbose } => {
+            use dx_forge::context::ComponentStateManager;
+            
+            let forge_dir = std::env::current_dir()?.join(".dx/forge");
+            let state_mgr = ComponentStateManager::new(&forge_dir)?;
+            
+            let components = state_mgr.list_components();
+            
+            if components.is_empty() {
+                println!("{}", "No managed components found.".yellow());
+                println!("\n{}", "To register a component:".bright_black());
+                println!(
+                    "  {}",
+                    "forge register <path> --source dx-ui --name Button --version 1.0.0".bright_white()
+                );
+            } else {
+                println!("{}", "📦 Managed Components".cyan().bold());
+                println!("{}", "═".repeat(80).bright_black());
+                
+                for comp in components {
+                    println!(
+                        "\n{} {} {}",
+                        "●".bright_green(),
+                        comp.name.bright_cyan().bold(),
+                        format!("v{}", comp.version).bright_black()
+                    );
+                    println!("   {} {}", "Source:".bright_black(), comp.source);
+                    println!("   {} {}", "Path:  ".bright_black(), comp.path);
+                    
+                    if verbose {
+                        println!("   {} {}", "Hash:  ".bright_black(), &comp.base_hash[..16]);
+                        println!(
+                            "   {} {}",
+                            "Added: ".bright_black(),
+                            comp.installed_at.format("%Y-%m-%d %H:%M:%S")
+                        );
+                    }
+                }
+                
+                println!("\n{}", "─".repeat(80).bright_black());
+                println!(
+                    "{} {} | {} {}",
+                    format!("{} components", components.len()).bright_white().bold(),
+                    "Use --verbose for details".bright_black(),
+                    "forge update <name>".bright_white(),
+                    "to update".bright_black()
+                );
+            }
+        }
+
+        Commands::Register {
+            path,
+            source,
+            name,
+            version,
+        } => {
+            use dx_forge::context::ComponentStateManager;
+            
+            let forge_dir = std::env::current_dir()?.join(".dx/forge");
+            let mut state_mgr = ComponentStateManager::new(&forge_dir)?;
+            
+            // Read component content
+            let content = tokio::fs::read_to_string(&path).await?;
+            
+            // Register component
+            state_mgr.register_component(&path, &source, &name, &version, &content)?;
+            
+            println!(
+                "{} Registered {} {} {}",
+                "✓".green(),
+                name.bright_cyan().bold(),
+                format!("v{}", version).bright_black(),
+                format!("from {}", source).bright_black()
+            );
+            println!("   {} {}", "Path:".bright_black(), path.display());
         }
     }
 

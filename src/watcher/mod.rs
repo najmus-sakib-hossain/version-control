@@ -1,5 +1,6 @@
 pub mod detector;
 pub mod cache_warmer;
+pub mod lsp_detector;
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
@@ -124,13 +125,32 @@ impl ForgeWatcher {
     
     /// Run the watcher (blocking)
     pub async fn run(self) -> Result<()> {
-        detector::start_watching(
-            self.repo_root,
-            self.oplog,
-            self.actor_id,
-            self.repo_id,
-            self.sync_mgr,
-        ).await
+        // Check if LSP support is available
+        let lsp_available = lsp_detector::detect_lsp_support().await?;
+        
+        if lsp_available {
+            // Use LSP-based detection
+            lsp_detector::start_lsp_monitoring(
+                self.repo_root,
+                self.oplog,
+                self.actor_id,
+                self.sync_mgr,
+            ).await
+        } else {
+            // Fall back to file system watching
+            println!(
+                "{} {} mode (no LSP extension detected)",
+                "👁️".bright_yellow(),
+                "File watching".bright_cyan().bold()
+            );
+            detector::start_watching(
+                self.repo_root,
+                self.oplog,
+                self.actor_id,
+                self.repo_id,
+                self.sync_mgr,
+            ).await
+        }
     }
 }
 

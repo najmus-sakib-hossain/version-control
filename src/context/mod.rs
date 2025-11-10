@@ -1,11 +1,13 @@
 pub mod ai_context;
 pub mod annotations;
 pub mod discussions;
+pub mod traffic_branch;
 
 use anyhow::Result;
 use std::path::Path;
 
 pub use annotations::Annotation;
+pub use traffic_branch::{ComponentStateManager, TrafficBranch, UpdateResult, apply_update};
 
 use crate::crdt::{Anchor, Position};
 use crate::storage::Database;
