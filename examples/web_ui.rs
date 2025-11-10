@@ -8,14 +8,16 @@
 //! - Responsive design with Tailwind CSS
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path as AxumPath, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
+use sha2::{Sha256, Digest};
 use std::io::Cursor;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::fs;
 use tower_http::services::ServeDir;
@@ -62,6 +64,24 @@ async fn main() -> Result<()> {
     let r2_storage = Arc::new(R2Storage::new(r2_config)?);
     
     let demo_root = "examples/forge-demo".to_string();
+    
+    // Initialize Forge storage if not exists
+    let demo_path = Path::new(&demo_root);
+    let forge_path = demo_path.join(".dx/forge");
+    let needs_init = !forge_path.exists();
+    
+    if needs_init {
+        println!("🔨 Initializing Forge storage at {}", forge_path.display());
+        dx_forge::storage::init(demo_path).await?;
+        println!("✅ Forge storage initialized");
+        
+        // Initialize repository with existing files
+        println!("📝 Scanning and storing existing files...");
+        initialize_repository(demo_path).await?;
+        println!("✅ Repository initialized with {} files", count_files(demo_path).await?);
+    } else {
+        println!("📦 Using existing Forge storage at {}", forge_path.display());
+    }
     
     let state = AppState {
         r2_storage,
@@ -156,12 +176,21 @@ fn build_file_tree<'a>(root: &'a str, path: &'a str) -> std::pin::Pin<Box<dyn st
             children: Some(children),
         })
     } else {
+        // Calculate SHA-256 hash of file content
+        let content = fs::read(path).await?;
+        let hash = {
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(&content);
+            format!("{:x}", hasher.finalize())
+        };
+        
         Ok(FileNode {
             name,
             path: relative_path.to_string(),
             node_type: "file".to_string(),
             size: Some(metadata.len()),
-            hash: None, // TODO: Calculate from R2
+            hash: Some(hash),
             children: None,
         })
     }
@@ -171,7 +200,7 @@ fn build_file_tree<'a>(root: &'a str, path: &'a str) -> std::pin::Pin<Box<dyn st
 /// Get file content
 async fn get_file_content(
     State(state): State<AppState>,
-    Path(path): Path<String>,
+    AxumPath(path): AxumPath<String>,
 ) -> Result<Json<FileContent>, StatusCode> {
     // Clean up path: remove leading slashes and normalize separators
     let clean_path = path.trim_start_matches('/').replace('\\', "/");
@@ -206,7 +235,7 @@ async fn get_file_content(
 /// Download individual file
 async fn download_file(
     State(state): State<AppState>,
-    Path(path): Path<String>,
+    AxumPath(path): AxumPath<String>,
 ) -> Result<Response, StatusCode> {
     // Clean up path: remove leading slashes and normalize separators
     let clean_path = path.trim_start_matches('/').replace('\\', "/");
@@ -548,3 +577,218 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
 </body>
 </html>
 "#;
+
+/// Initialize repository by storing all existing files as blobs
+async fn initialize_repository(repo_root: &Path) -> Result<()> {
+    use dx_forge::storage::Database;
+    
+    let forge_path = repo_root.join(".dx/forge");
+    let db = Database::new(&forge_path)?;
+    db.initialize()?;
+    
+    // Initialize refs (like Git refs)
+    initialize_refs(&forge_path).await?;
+    
+    // Initialize logs
+    initialize_logs(&forge_path).await?;
+    
+    // Initialize context
+    initialize_context(&forge_path).await?;
+    
+    // Recursively scan and store files
+    store_directory_blobs(repo_root, repo_root, &forge_path).await?;
+    
+    Ok(())
+}
+
+/// Recursively store files as blobs
+fn store_directory_blobs<'a>(
+    repo_root: &'a Path,
+    dir_path: &'a Path,
+    forge_path: &'a Path,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut entries = fs::read_dir(dir_path).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            
+            // Skip .dx and .git directories
+            if name.starts_with('.') && (name == ".dx" || name == ".git" || name == ".forge") {
+                continue;
+            }
+            
+            if entry.file_type().await?.is_dir() {
+                // Recursively process directory
+                store_directory_blobs(repo_root, &path, forge_path).await?;
+            } else {
+                // Store file as blob
+                let content = fs::read(&path).await?;
+                let hash = {
+                    let mut hasher = Sha256::new();
+                    hasher.update(&content);
+                    format!("{:x}", hasher.finalize())
+                };
+                
+                // Store in objects directory (content-addressable)
+                let hash_dir = forge_path.join("objects").join(&hash[..2]);
+                tokio::fs::create_dir_all(&hash_dir).await?;
+                let blob_path = hash_dir.join(&hash[2..]);
+                
+                if !blob_path.exists() {
+                    tokio::fs::write(&blob_path, &content).await?;
+                    
+                    let relative_path = path.strip_prefix(repo_root)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string();
+                    
+                    println!("  📄 Stored: {} ({})", relative_path, &hash[..8]);
+                }
+            }
+        }
+        
+        Ok(())
+    })
+}
+
+/// Count files in repository
+async fn count_files(repo_root: &Path) -> Result<usize> {
+    let mut count = 0;
+    count_files_recursive(repo_root, &mut count).await?;
+    Ok(count)
+}
+
+/// Recursively count files
+fn count_files_recursive<'a>(
+    dir_path: &'a Path,
+    count: &'a mut usize,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut entries = fs::read_dir(dir_path).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            
+            if name.starts_with('.') {
+                continue;
+            }
+            
+            if entry.file_type().await?.is_dir() {
+                count_files_recursive(&path, count).await?;
+            } else {
+                *count += 1;
+            }
+        }
+        
+        Ok(())
+    })
+}
+
+/// Initialize refs directory (Git-compatible references)
+async fn initialize_refs(forge_path: &Path) -> Result<()> {
+    let refs_path = forge_path.join("refs");
+    
+    // Create refs subdirectories
+    tokio::fs::create_dir_all(refs_path.join("heads")).await?;
+    tokio::fs::create_dir_all(refs_path.join("tags")).await?;
+    tokio::fs::create_dir_all(refs_path.join("remotes")).await?;
+    
+    // Get current Git branch if in a Git repo
+    let head_ref = get_current_git_branch(forge_path.parent().unwrap()).await
+        .unwrap_or_else(|_| "main".to_string());
+    
+    // Create HEAD file pointing to current branch
+    let head_content = format!("ref: refs/heads/{}", head_ref);
+    tokio::fs::write(forge_path.join("HEAD"), head_content).await?;
+    
+    // Create branch ref with current commit (initial)
+    let branch_ref_path = refs_path.join("heads").join(&head_ref);
+    let initial_commit = format!("{}-init", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    tokio::fs::write(&branch_ref_path, initial_commit).await?;
+    
+    println!("  📍 Initialized refs: HEAD -> refs/heads/{}", head_ref);
+    
+    Ok(())
+}
+
+/// Initialize logs directory (operation audit trail)
+async fn initialize_logs(forge_path: &Path) -> Result<()> {
+    let logs_path = forge_path.join("logs");
+    
+    // Create logs subdirectories
+    tokio::fs::create_dir_all(logs_path.join("refs")).await?;
+    
+    // Create initial log entry
+    let log_entry = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "action": "init",
+        "message": "Repository initialized",
+        "actor": std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "unknown".to_string()),
+    });
+    
+    let log_file = logs_path.join("HEAD");
+    tokio::fs::write(log_file, serde_json::to_string_pretty(&log_entry)?).await?;
+    
+    println!("  📝 Initialized logs: operation audit trail");
+    
+    Ok(())
+}
+
+/// Initialize context directory (AI context and annotations)
+async fn initialize_context(forge_path: &Path) -> Result<()> {
+    let context_path = forge_path.join("context");
+    
+    // Create context subdirectories
+    tokio::fs::create_dir_all(context_path.join("discussions")).await?;
+    tokio::fs::create_dir_all(context_path.join("annotations")).await?;
+    tokio::fs::create_dir_all(context_path.join("ai_sessions")).await?;
+    
+    // Create initial context metadata
+    let context_meta = serde_json::json!({
+        "version": "1.0",
+        "initialized_at": chrono::Utc::now().to_rfc3339(),
+        "features": {
+            "ai_discussions": true,
+            "code_annotations": true,
+            "anchor_tracking": true,
+        }
+    });
+    
+    let meta_file = context_path.join("metadata.json");
+    tokio::fs::write(meta_file, serde_json::to_string_pretty(&context_meta)?).await?;
+    
+    println!("  💬 Initialized context: AI discussions and annotations");
+    
+    Ok(())
+}
+
+/// Get current Git branch
+async fn get_current_git_branch(repo_path: &Path) -> Result<String> {
+    use std::process::Command;
+    
+    let output = Command::new("git")
+        .args(&["branch", "--show-current"])
+        .current_dir(repo_path)
+        .output()?;
+    
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !branch.is_empty() {
+            return Ok(branch);
+        }
+    }
+    
+    // Fallback: try reading .git/HEAD
+    let git_head = repo_path.join(".git/HEAD");
+    if git_head.exists() {
+        let content = tokio::fs::read_to_string(git_head).await?;
+        if let Some(branch) = content.strip_prefix("ref: refs/heads/") {
+            return Ok(branch.trim().to_string());
+        }
+    }
+    
+    anyhow::bail!("Not in a Git repository")
+}

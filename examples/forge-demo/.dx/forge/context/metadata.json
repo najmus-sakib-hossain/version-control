@@ -1,0 +1,9 @@
+{
+  "features": {
+    "ai_discussions": true,
+    "anchor_tracking": true,
+    "code_annotations": true
+  },
+  "initialized_at": "2025-11-10T16:16:16.162093300+00:00",
+  "version": "1.0"
+}
