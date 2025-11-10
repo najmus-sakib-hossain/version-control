@@ -6,6 +6,7 @@ use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
+use colored::Colorize;
 
 use crate::storage::{Database, OperationLog};
 use crate::sync::{SyncManager, remote::connect_peer};

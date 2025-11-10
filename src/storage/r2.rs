@@ -4,10 +4,10 @@
 /// Zero egress fees make it perfect for code hosting platforms.
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use sha2::{Sha256, Digest};
 
 use super::blob::Blob;
 
@@ -89,6 +89,8 @@ impl R2Storage {
         let key = format!("blobs/{}/{}", &hash[..2], &hash[2..]);
         
         let binary = blob.to_binary()?;
+        let content_hash = compute_sha256_hex(&binary);
+        let date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         
         let url = format!("{}/{}/{}", self.config.endpoint_url(), self.config.bucket_name, key);
         
@@ -99,7 +101,8 @@ impl R2Storage {
             .put(&url)
             .header(header::AUTHORIZATION, authorization)
             .header(header::CONTENT_TYPE, "application/octet-stream")
-            .header("x-amz-content-sha256", hash)
+            .header("x-amz-content-sha256", content_hash)
+            .header("x-amz-date", date)
             .body(binary)
             .send()
             .await?;
@@ -116,6 +119,7 @@ impl R2Storage {
     /// Download blob from R2
     pub async fn download_blob(&self, hash: &str) -> Result<Blob> {
         let key = format!("blobs/{}/{}", &hash[..2], &hash[2..]);
+        let date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         
         let url = format!("{}/{}/{}", self.config.endpoint_url(), self.config.bucket_name, key);
         
@@ -124,6 +128,8 @@ impl R2Storage {
         let response = self.client
             .get(&url)
             .header(header::AUTHORIZATION, authorization)
+            .header("x-amz-date", date)
+            .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
             .send()
             .await?;
         
@@ -144,6 +150,7 @@ impl R2Storage {
     /// Check if blob exists in R2
     pub async fn blob_exists(&self, hash: &str) -> Result<bool> {
         let key = format!("blobs/{}/{}", &hash[..2], &hash[2..]);
+        let date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         
         let url = format!("{}/{}/{}", self.config.endpoint_url(), self.config.bucket_name, key);
         
@@ -152,6 +159,7 @@ impl R2Storage {
         let response = self.client
             .head(&url)
             .header(header::AUTHORIZATION, authorization)
+            .header("x-amz-date", date)
             .send()
             .await?;
         
@@ -161,6 +169,7 @@ impl R2Storage {
     /// Delete blob from R2
     pub async fn delete_blob(&self, hash: &str) -> Result<()> {
         let key = format!("blobs/{}/{}", &hash[..2], &hash[2..]);
+        let date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         
         let url = format!("{}/{}/{}", self.config.endpoint_url(), self.config.bucket_name, key);
         
@@ -169,6 +178,7 @@ impl R2Storage {
         let response = self.client
             .delete(&url)
             .header(header::AUTHORIZATION, authorization)
+            .header("x-amz-date", date)
             .send()
             .await?;
         
@@ -187,12 +197,14 @@ impl R2Storage {
         // For R2, you can also use S3-compatible libraries
         
         use hmac::{Hmac, Mac};
-        use sha2::Sha256;
         
         type HmacSha256 = Hmac<Sha256>;
         
         let date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         let date_short = &date[..8];
+        
+        let body_hash = compute_sha256_hex(body);
+        let host = format!("{}.r2.cloudflarestorage.com", self.config.account_id);
         
         // Canonical request
         let canonical_request = format!(
@@ -200,18 +212,20 @@ impl R2Storage {
             method,
             self.config.bucket_name,
             key,
-            format!("{}.r2.cloudflarestorage.com", self.config.account_id),
-            compute_sha256_hex(body),
+            host,
+            body_hash,
             date,
-            compute_sha256_hex(canonical_request.as_bytes())
+            body_hash
         );
+        
+        let canonical_request_hash = compute_sha256_hex(canonical_request.as_bytes());
         
         // String to sign
         let string_to_sign = format!(
             "AWS4-HMAC-SHA256\n{}\n{}/auto/s3/aws4_request\n{}",
             date,
             date_short,
-            compute_sha256_hex(canonical_request.as_bytes())
+            canonical_request_hash
         );
         
         // Signing key

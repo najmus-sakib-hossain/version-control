@@ -600,6 +600,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.6",
+ "subtle",
 ]
 
 [[package]]
@@ -625,6 +626,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "dx-forge"
 version = "0.0.1"
 dependencies = [
@@ -632,6 +639,7 @@ dependencies = [
  "anyhow",
  "automerge",
  "axum",
+ "base64",
  "bincode",
  "bytes",
  "chrono",
@@ -639,8 +647,11 @@ dependencies = [
  "colored",
  "crossbeam",
  "dashmap",
+ "dotenvy",
  "futures",
  "git2",
+ "hex",
+ "hmac",
  "ignore",
  "jwalk",
  "lz4",
@@ -1029,6 +1040,15 @@ checksum = "f117759ffbdfa82096cd01c7adcc8465486df830eeafb5033502074f8df3f0c7"
 dependencies = [
  "leb128",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
