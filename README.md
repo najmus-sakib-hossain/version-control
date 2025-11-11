@@ -21,11 +21,14 @@ Traditional JavaScript tooling installs **hundreds of megabytes** of dependencie
 
 1. **LSP Detection**: Your editor already knows what code you write
 2. **On-Demand Injection**: Fetch only `dxButton` when you type `dxButton`
-3. **Content-Addressable**: SHA-256 deduplication prevents duplicates
-4. **R2 Cloud Sync**: Zero-egress storage with instant availability
-5. **Tool Orchestration**: Coordinate dx-style, dx-ui, dx-icons automatically
+3. **Self-Contained Tools**: Each DX tool knows what to do - Forge just says "Go!"
+4. **Content-Addressable**: SHA-256 deduplication prevents duplicates
+5. **R2 Cloud Sync**: Zero-egress storage with instant availability
+6. **Simple Orchestration**: Forge detects changes, tools decide if they should run
 
 **Result**: Install nothing. Use everything. Pay for nothing.
+
+**Key Principle**: Forge is a dumb coordinator. Tools are smart and autonomous.
 
 ## 🏗️ Architecture
 
@@ -273,27 +276,23 @@ Forge orchestrates an entire ecosystem of zero-bloat tools:
 | **dx-auth** | Authentication helpers | 30 | dx-ui |
 | **dx-check** | Linting & validation | 10 | all |
 
-### Tool Manifests
+### Self-Contained Tools
 
-Configure tools via TOML manifests in `tools/` directory:
+Each DX tool is autonomous and knows:
+- What files it needs to process
+- When it should run
+- What patterns to detect
+- How to inject code
 
-```toml
-# tools/dx-ui.toml
-[tool]
-name = "dx-ui"
-version = "2.1.0"
+Forge doesn't configure tools. It just calls them when file changes are detected.
 
-[dependencies]
-required = ["dx-style"]
-optional = ["dx-icons"]
+```rust
+// Tools register themselves with Forge
+orchestrator.register_tool(Box::new(DxUiTool::new()));
+orchestrator.register_tool(Box::new(DxStyleTool::new()));
 
-[triggers]
-lsp_patterns = ["dxButton", "dxInput", "dxModal"]
-
-[traffic]
-green_patterns = ["*.test.*"]
-yellow_patterns = ["*.tsx", "*.jsx"]
-red_patterns = ["**/api/**"]
+// Forge detects changes and asks each tool: "Should you run?"
+// Each tool decides based on its own logic
 ```
 
 ## ⚙️ Configuration
@@ -327,11 +326,11 @@ bucket = "dx-forge-production"
 endpoint = "https://storage.dx.tools"
 ```
 
-### Tool Manifests
+### Zero Configuration
 
-Each tool defines triggers, dependencies, and behavior in `tools/{tool-name}.toml`.
+Tools configure themselves. Forge just detects changes and calls tools.
 
-See `tools/dx-ui.toml` and `tools/dx-style.toml` for complete examples.
+No manifest files needed. Tools are autonomous.
 
 ## � Performance
 

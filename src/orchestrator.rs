@@ -1,11 +1,11 @@
-//! Orchestrator - Coordinates execution of DX tools in proper order
+//! Simple Orchestrator - Only controls WHEN to run tools
 //!
-//! The orchestrator manages:
-//! - Tool registration and lifecycle
-//! - Execution order based on priorities
-//! - Dependency resolution
-//! - Context sharing between tools
-//! - Error handling and rollback
+//! Tools are self-contained and know:
+//! - What files to process
+//! - When they should run
+//! - What patterns to detect
+//!
+//! Forge just detects changes and asks: "Should you run?"
 
 use anyhow::{Context as _, Result};
 use std::collections::{HashMap, HashSet};
@@ -156,50 +156,8 @@ pub trait DxTool: Send + Sync {
     }
 }
 
-/// Tool manifest loaded from TOML
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolManifest {
-    pub tool: ToolInfo,
-    pub dependencies: ToolDependencies,
-    pub triggers: ToolTriggers,
-    pub traffic_branch: TrafficBranchConfig,
-    pub execution: ExecutionConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInfo {
-    pub name: String,
-    pub version: String,
-    pub priority: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDependencies {
-    #[serde(default)]
-    pub requires: Vec<String>,
-    #[serde(default)]
-    pub conflicts: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolTriggers {
-    #[serde(default)]
-    pub patterns: Vec<String>,
-    #[serde(default)]
-    pub extensions: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrafficBranchConfig {
-    pub enabled: bool,
-    pub strategy: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionConfig {
-    pub order: String,
-    pub timeout: u64,
-}
+// Tools are self-contained - no manifests needed
+// Each tool knows what to do and when to run
 
 /// Traffic branch analysis result
 #[derive(Debug, Clone, PartialEq)]
@@ -241,10 +199,9 @@ impl TrafficAnalyzer for DefaultTrafficAnalyzer {
     }
 }
 
-/// Main orchestrator that manages all DX tools
+/// Simple orchestrator - just coordinates tool execution timing
 pub struct Orchestrator {
     tools: Vec<Box<dyn DxTool>>,
-    manifests: HashMap<String, ToolManifest>,
     context: ExecutionContext,
 }
 
@@ -256,29 +213,16 @@ impl Orchestrator {
         
         Ok(Self {
             tools: Vec::new(),
-            manifests: HashMap::new(),
             context: ExecutionContext::new(repo_root, forge_path),
         })
     }
     
-    /// Register a tool
+    /// Register a tool (tools configure themselves)
     pub fn register_tool(&mut self, tool: Box<dyn DxTool>) -> Result<()> {
         let name = tool.name().to_string();
-        println!("📦 Registered tool: {} v{}", name, tool.version());
+        println!("📦 Registered tool: {} v{} (priority: {})", 
+            name, tool.version(), tool.priority());
         self.tools.push(tool);
-        Ok(())
-    }
-    
-    /// Load tool manifest from TOML file
-    pub fn load_manifest(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .with_context(|| format!("Failed to read manifest: {}", path.as_ref().display()))?;
-        
-        let manifest: ToolManifest = toml::from_str(&content)
-            .with_context(|| "Failed to parse TOML manifest")?;
-        
-        let name = manifest.tool.name.clone();
-        self.manifests.insert(name, manifest);
         Ok(())
     }
     

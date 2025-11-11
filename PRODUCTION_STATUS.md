@@ -21,11 +21,10 @@
 **Status**: ✅ Implementation complete, needs LSP server integration
 
 ### 3. Configuration System
-- **orchestration.toml**: Global orchestration config with phases, tools, traffic, watcher
-- **tools/dx-ui.toml**: Complete UI tool manifest example
-- **tools/dx-style.toml**: Complete style tool manifest example
+- **orchestration.toml**: Simple global config (just timing and storage)
+- **No tool manifests**: Tools configure themselves - zero config approach
 
-**Status**: ✅ Configuration system fully designed and documented
+**Status**: ✅ Simplified configuration system complete
 
 ### 4. Documentation
 - **ARCHITECTURE.md**: 320+ lines documenting system design

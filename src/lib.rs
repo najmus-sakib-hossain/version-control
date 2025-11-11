@@ -93,9 +93,9 @@ pub use orchestrator::{
     DxTool, 
     ExecutionContext, 
     ToolOutput, 
-    ToolManifest,
     TrafficBranch,
     TrafficAnalyzer,
+    Conflict,
 };
 
 pub use watcher::{
