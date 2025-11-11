@@ -1,6 +1,6 @@
 # DX Forge - Production VCS & Orchestration Engine
 
-**Zero-bloat dependency management for the modern web**
+## Zero-bloat dependency management for the modern web
 
 Forge is a production-ready version control system and orchestration engine that eliminates node_modules bloat by detecting code patterns via LSP and injecting only the components you actually use. Built for the DX tools ecosystem (dx-style, dx-ui, dx-icons, dx-fonts, dx-i18n, dx-check, dx-auth).
 
@@ -135,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-### Component Injection
+### Automatic Component Injection
 
 Detect and inject components automatically:
 
@@ -279,10 +279,15 @@ Forge orchestrates an entire ecosystem of zero-bloat tools:
 ### Self-Contained Tools
 
 Each DX tool is autonomous and knows:
+
 - What files it needs to process
 - When it should run
 - What patterns to detect
 - How to inject code
+
+```rust
+
+```rust
 
 Forge doesn't configure tools. It just calls them when file changes are detected.
 
@@ -342,7 +347,7 @@ No manifest files needed. Tools are autonomous.
 
 ### Traffic Analysis
 
-- **Green Detection**: <1ms for safe patterns (*.css, *.md)
+- **Green Detection**: <1ms for safe patterns (`*.css`, `*.md`)
 - **Yellow Analysis**: <50ms for merge conflict detection
 - **Red Blocking**: <10ms for breaking change validation
 
@@ -431,6 +436,7 @@ cargo run --example web_ui
 ## �️ Roadmap
 
 ### v1.0 (Current) ✅
+
 - [x] Core orchestration engine
 - [x] Dual-watcher (LSP + FS)
 - [x] Traffic branch system
@@ -439,6 +445,7 @@ cargo run --example web_ui
 - [x] Tool manifest system
 
 ### v1.1 (Next)
+
 - [ ] LSP server integration (full semantic analysis)
 - [ ] R2 sync engine (bidirectional cloud sync)
 - [ ] Component injection system (dx-ui integration)
@@ -446,6 +453,7 @@ cargo run --example web_ui
 - [ ] Web UI for repository browsing
 
 ### v1.2 (Future)
+
 - [ ] Multi-peer CRDT sync
 - [ ] Conflict resolution UI
 - [ ] Performance profiler
@@ -453,6 +461,7 @@ cargo run --example web_ui
 - [ ] CLI improvements
 
 ### v2.0 (Vision)
+
 - [ ] Complete node_modules replacement
 - [ ] Public DX component registry
 - [ ] Zero-config setup for any project
@@ -473,7 +482,7 @@ cargo test --all-features
 cargo run --example orchestration
 ```
 
-### Building a DX Tool
+### Creating a DX Tool
 
 1. Implement the `DxTool` trait
 2. Create a tool manifest in `tools/your-tool.toml`
@@ -489,6 +498,7 @@ Dual-licensed under MIT OR Apache-2.0
 ## 🙏 Acknowledgments
 
 Inspired by:
+
 - **dx-style** - Zero-bloat CSS approach
 - **Rome/Biome** - All-in-one tooling vision
 - **Turborepo** - Monorepo orchestration
@@ -504,4 +514,4 @@ Inspired by:
 
 ---
 
-**Built with ❤️ to eliminate node_modules bloat forever**
+## Built with ❤️ to eliminate node_modules bloat forever

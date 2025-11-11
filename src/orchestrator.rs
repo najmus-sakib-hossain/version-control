@@ -7,7 +7,7 @@
 //!
 //! Forge just detects changes and asks: "Should you run?"
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

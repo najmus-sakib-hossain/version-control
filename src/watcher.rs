@@ -61,6 +61,7 @@ pub struct LspEvent {
 
 /// LSP Watcher - monitors Language Server Protocol events
 pub struct LspWatcher {
+    #[allow(dead_code)]
     lsp_rx: Receiver<LspEvent>,
     change_tx: broadcast::Sender<FileChange>,
     running: Arc<RwLock<bool>>,
@@ -105,6 +106,7 @@ impl LspWatcher {
     }
     
     /// Process LSP events (would be called from LSP message loop)
+    #[allow(dead_code)]
     fn process_lsp_event(&self, event: LspEvent) -> Result<()> {
         let path = PathBuf::from(event.uri.trim_start_matches("file://"));
         
@@ -124,7 +126,6 @@ impl LspWatcher {
 /// File System Watcher - monitors actual file system changes
 pub struct FileWatcher {
     debouncer: Option<Debouncer<RecommendedWatcher, FileIdMap>>,
-    change_tx: broadcast::Sender<FileChange>,
     _event_tx: Sender<DebounceEventResult>,
 }
 
@@ -154,7 +155,6 @@ impl FileWatcher {
         Ok((
             Self {
                 debouncer: Some(debouncer),
-                change_tx,
                 _event_tx: event_tx,
             },
             change_rx,

@@ -282,17 +282,17 @@ async fn main() -> Result<()> {
             storage::time_travel(&file, timestamp).await?;
         }
 
-        Commands::Update { component, force } => {
+        Commands::Update { component, force: _ } => {
             use dx_forge::context::ComponentStateManager;
             
             let forge_dir = std::env::current_dir()?.join(".dx/forge");
-            let mut state_mgr = ComponentStateManager::new(&forge_dir)?;
+            let state_mgr = ComponentStateManager::new(&forge_dir)?;
             
             if let Some(comp_name) = component {
                 if comp_name == "all" {
                     println!("{}", "🔄 Updating all components...".cyan().bold());
                     let components = state_mgr.list_components();
-                    for comp in components {
+                    for comp in &components {
                         println!("\n{} Checking {}...", "→".bright_black(), comp.name.bright_cyan());
                         // In production, fetch remote version and apply update
                         println!("   {} (placeholder - would fetch and update)", "→".bright_black());
@@ -332,7 +332,7 @@ async fn main() -> Result<()> {
                 println!("{}", "📦 Managed Components".cyan().bold());
                 println!("{}", "═".repeat(80).bright_black());
                 
-                for comp in components {
+                for comp in &components {
                     println!(
                         "\n{} {} {}",
                         "●".bright_green(),

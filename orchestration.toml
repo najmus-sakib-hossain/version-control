@@ -2,7 +2,7 @@
 # Forge only controls WHEN to run tools, not WHAT they do
 
 [orchestration]
-version = "1.0"
+version = "0.0.1"
 description = "Simple tool coordinator - tools configure themselves"
 
 # Global settings
