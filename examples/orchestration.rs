@@ -6,14 +6,14 @@
 //!
 //! Run with: cargo run --example orchestration
 
-use dx_forge::{
-    DxTool, ExecutionContext, ToolOutput, Orchestrator,
-    DualWatcher, FileChange, TrafficBranch, TrafficAnalyzer,
-};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use anyhow::{Result, Context};
-use std::path::{Path, PathBuf};
+use dx_forge::{
+    DualWatcher, DxTool, ExecutionContext, FileChange, Orchestrator, ToolOutput, TrafficAnalyzer,
+    TrafficBranch,
+};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tokio::time::{sleep, Duration};
 
 /// Example DX-Style tool: manages CSS/styling
@@ -58,9 +58,7 @@ impl DxTool for DxStyleTool {
         Ok(ToolOutput {
             success: true,
             message: "Styles processed successfully".to_string(),
-            artifacts: HashMap::from([
-                ("css_bundle".to_string(), "styles.min.css".to_string()),
-            ]),
+            artifacts: HashMap::from([("css_bundle".to_string(), "styles.min.css".to_string())]),
             warnings: vec![],
             errors: vec![],
             execution_time: Duration::from_millis(50),
@@ -103,7 +101,10 @@ impl DxTool for DxUiTool {
         sleep(Duration::from_millis(100)).await; // Simulate work
 
         let mut artifacts = HashMap::new();
-        artifacts.insert("components_injected".to_string(), "dxButton, dxInput".to_string());
+        artifacts.insert(
+            "components_injected".to_string(),
+            "dxButton, dxInput".to_string(),
+        );
 
         Ok(ToolOutput {
             success: true,
@@ -153,9 +154,7 @@ impl DxTool for DxIconsTool {
         Ok(ToolOutput {
             success: true,
             message: "Icons injected: dxiArrowRight, dxiCheck".to_string(),
-            artifacts: HashMap::from([
-                ("icons_count".to_string(), "2".to_string()),
-            ]),
+            artifacts: HashMap::from([("icons_count".to_string(), "2".to_string())]),
             warnings: vec![],
             errors: vec![],
             execution_time: Duration::from_millis(30),
@@ -215,20 +214,25 @@ impl DxTool for DxCheckTool {
 struct SimpleTrafficAnalyzer;
 
 impl TrafficAnalyzer for SimpleTrafficAnalyzer {
-    fn analyze_change(&self, _file: &Path, _old_content: &str, _new_content: &str) -> TrafficBranch {
+    fn analyze_change(
+        &self,
+        _file: &Path,
+        _old_content: &str,
+        _new_content: &str,
+    ) -> TrafficBranch {
         // In a real implementation, this would do:
         // 1. Parse both versions
         // 2. Detect conflicts
         // 3. Decide on traffic branch
-        
+
         // For demo: randomly assign traffic status
         use std::collections::hash_map::RandomState;
         use std::hash::{BuildHasher, Hasher};
-        
+
         let mut hasher = RandomState::new().build_hasher();
         hasher.write(std::process::id().to_string().as_bytes());
         let val = hasher.finish() % 3;
-        
+
         match val {
             0 => TrafficBranch::Green,
             1 => TrafficBranch::Yellow(vec!["Potential style conflict".to_string()]),
@@ -240,10 +244,10 @@ impl TrafficAnalyzer for SimpleTrafficAnalyzer {
 /// Monitor file changes with the dual-watcher
 async fn monitor_changes(repo_path: &str) -> Result<()> {
     println!("\n📡 Starting Dual-Watcher (LSP + File System)...");
-    
+
     let watcher = DualWatcher::new(repo_path)?;
     let mut rx = watcher.subscribe();
-    
+
     // Start watcher in background
     let watch_handle = tokio::spawn(async move {
         if let Err(e) = watcher.start().await {
@@ -298,13 +302,13 @@ async fn main() -> Result<()> {
     println!("   Registering DX tools:");
     orchestrator.register_tool(Box::new(DxStyleTool));
     println!("   ✓ dx-style (priority: 100)");
-    
+
     orchestrator.register_tool(Box::new(DxUiTool));
     println!("   ✓ dx-ui (priority: 80, depends: dx-style)");
-    
+
     orchestrator.register_tool(Box::new(DxIconsTool));
     println!("   ✓ dx-icons (priority: 60, depends: dx-ui)");
-    
+
     orchestrator.register_tool(Box::new(DxCheckTool));
     println!("   ✓ dx-check (priority: 10, depends: dx-style, dx-ui, dx-icons)");
 
@@ -316,26 +320,26 @@ async fn main() -> Result<()> {
             for output in outputs {
                 let status = if output.success { "✅" } else { "❌" };
                 println!("   {} {}", status, output.message);
-                
+
                 if !output.warnings.is_empty() {
                     for warning in &output.warnings {
                         println!("      ⚠️  {}", warning);
                     }
                 }
-                
+
                 if !output.errors.is_empty() {
                     for error in &output.errors {
                         println!("      ❌ {}", error);
                     }
                 }
-                
+
                 if !output.artifacts.is_empty() {
                     println!("      📦 Artifacts:");
                     for (key, value) in &output.artifacts {
                         println!("         - {}: {}", key, value);
                     }
                 }
-                
+
                 println!("      ⏱️  Execution time: {:?}", output.execution_time);
                 println!();
             }
@@ -354,7 +358,7 @@ async fn main() -> Result<()> {
         "old content",
         "new content",
     );
-    
+
     match branch {
         TrafficBranch::Green => println!("   🟢 Green: Safe to auto-update"),
         TrafficBranch::Yellow(conflicts) => {

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use automerge::{AutoCommit, ROOT, ReadDoc, transaction::Transactable};
+use automerge::{transaction::Transactable, AutoCommit, ReadDoc, ROOT};
 use parking_lot::RwLock;
 use ropey::Rope;
 use std::path::PathBuf;

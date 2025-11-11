@@ -89,28 +89,15 @@ pub mod watcher;
 
 // Re-export orchestration types (public API)
 pub use orchestrator::{
-    Orchestrator, 
-    DxTool, 
-    ExecutionContext, 
-    ToolOutput, 
-    TrafficBranch,
-    TrafficAnalyzer,
-    Conflict,
+    Conflict, DxTool, ExecutionContext, Orchestrator, ToolOutput, TrafficAnalyzer, TrafficBranch,
 };
 
-pub use watcher::{
-    DualWatcher, 
-    LspWatcher, 
-    FileWatcher, 
-    FileChange,
-    ChangeKind,
-    ChangeSource,
-};
+pub use watcher::{ChangeKind, ChangeSource, DualWatcher, FileChange, FileWatcher, LspWatcher};
 
 // Re-export storage types
+pub use context::{ComponentStateManager, UpdateResult};
 pub use crdt::{Operation, OperationType, Position};
 pub use storage::{Database, OperationLog};
-pub use context::{ComponentStateManager, UpdateResult};
 
 // Legacy exports (deprecated in favor of new watcher module)
 #[deprecated(since = "1.0.0", note = "use `watcher::DualWatcher` instead")]

@@ -1,18 +1,22 @@
 /// Example: Traffic Branch System & LSP Detection
-/// 
+///
 /// This example demonstrates:
 /// 1. Traffic Branch System (Red/Yellow/Green) for component updates
 /// 2. LSP detection and fallback to file watching
-
 use anyhow::Result;
 use colored::*;
-use dx_forge::context::{ComponentStateManager, TrafficBranch, apply_update};
+use dx_forge::context::{apply_update, ComponentStateManager, TrafficBranch};
 use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("{}", "═".repeat(80).bright_cyan());
-    println!("{}", "Forge: Traffic Branch System & LSP Detection Demo".cyan().bold());
+    println!(
+        "{}",
+        "Forge: Traffic Branch System & LSP Detection Demo"
+            .cyan()
+            .bold()
+    );
     println!("{}", "═".repeat(80).bright_cyan());
 
     // Create a temporary test directory
@@ -40,21 +44,24 @@ export function Button({ children, onClick }) {
 "#;
 
     tokio::fs::write(&component_path, initial_content).await?;
-    println!("\n{} Created test component: {}", "✓".green(), "Button.tsx".cyan());
+    println!(
+        "\n{} Created test component: {}",
+        "✓".green(),
+        "Button.tsx".cyan()
+    );
 
     // Register component
-    state_mgr.register_component(
-        &component_path,
-        "dx-ui",
-        "Button",
-        "1.0.0",
-        initial_content,
-    )?;
+    state_mgr.register_component(&component_path, "dx-ui", "Button", "1.0.0", initial_content)?;
 
     println!("{} Registered component with state manager", "✓".green());
 
     // Scenario 1: 🟢 GREEN BRANCH - No local modifications
-    println!("\n{}", "Scenario 1: 🟢 Green Branch (Auto-Update)".bright_green().bold());
+    println!(
+        "\n{}",
+        "Scenario 1: 🟢 Green Branch (Auto-Update)"
+            .bright_green()
+            .bold()
+    );
     println!("{}", "─".repeat(40).bright_black());
 
     let remote_v2 = r#"
@@ -76,9 +83,13 @@ export function Button({ children, onClick, variant = "primary" }) {
 
     match branch {
         TrafficBranch::Green => {
-            println!("{} {} No local changes detected", "🟢".bright_green(), "GREEN:".green().bold());
+            println!(
+                "{} {} No local changes detected",
+                "🟢".bright_green(),
+                "GREEN:".green().bold()
+            );
             println!("   {} Component will be auto-updated", "→".bright_black());
-            
+
             // Apply update
             apply_update(&component_path, remote_v2, "2.0.0", &mut state_mgr).await?;
         }
@@ -86,7 +97,12 @@ export function Button({ children, onClick, variant = "primary" }) {
     }
 
     // Scenario 2: 🟡 YELLOW BRANCH - Non-conflicting local changes
-    println!("\n{}", "Scenario 2: 🟡 Yellow Branch (Merge)".bright_yellow().bold());
+    println!(
+        "\n{}",
+        "Scenario 2: 🟡 Yellow Branch (Merge)"
+            .bright_yellow()
+            .bold()
+    );
     println!("{}", "─".repeat(40).bright_black());
 
     // Modify locally (add a comment)
@@ -130,7 +146,11 @@ export function Button({ children, onClick, variant = "primary", disabled = fals
 
     match branch {
         TrafficBranch::Yellow { .. } => {
-            println!("{} {} Non-conflicting changes detected", "🟡".bright_yellow(), "YELLOW:".yellow().bold());
+            println!(
+                "{} {} Non-conflicting changes detected",
+                "🟡".bright_yellow(),
+                "YELLOW:".yellow().bold()
+            );
             println!("   {} Local changes will be preserved", "→".bright_black());
             println!("   {} Remote updates will be merged", "→".bright_black());
         }
@@ -138,7 +158,10 @@ export function Button({ children, onClick, variant = "primary", disabled = fals
     }
 
     // Scenario 3: 🔴 RED BRANCH - Conflicting changes
-    println!("\n{}", "Scenario 3: 🔴 Red Branch (Conflict)".bright_red().bold());
+    println!(
+        "\n{}",
+        "Scenario 3: 🔴 Red Branch (Conflict)".bright_red().bold()
+    );
     println!("{}", "─".repeat(40).bright_black());
 
     // Both modify the same line
@@ -163,9 +186,17 @@ export function Button({ children, onClick, variant = "primary" }) {
 
     match branch {
         TrafficBranch::Red { conflicts } => {
-            println!("{} {} Conflicting changes detected", "🔴".bright_red(), "RED:".red().bold());
+            println!(
+                "{} {} Conflicting changes detected",
+                "🔴".bright_red(),
+                "RED:".red().bold()
+            );
             println!("   {} Manual resolution required", "→".bright_black());
-            println!("   {} Conflicts: {}", "→".bright_black(), conflicts.join(", "));
+            println!(
+                "   {} Conflicts: {}",
+                "→".bright_black(),
+                conflicts.join(", ")
+            );
         }
         _ => {}
     }
@@ -176,11 +207,18 @@ export function Button({ children, onClick, variant = "primary" }) {
 
     use dx_forge::watcher::lsp_detector;
 
-    println!("\n{} Checking for DX editor extension...", "→".bright_black());
+    println!(
+        "\n{} Checking for DX editor extension...",
+        "→".bright_black()
+    );
     let lsp_available = lsp_detector::detect_lsp_support().await?;
 
     if lsp_available {
-        println!("{} {} detected!", "✓".bright_green(), "DX LSP extension".bright_cyan());
+        println!(
+            "{} {} detected!",
+            "✓".bright_green(),
+            "DX LSP extension".bright_cyan()
+        );
         println!("   {} Using LSP-based change detection", "→".bright_black());
         println!("   {} Benefits:", "→".bright_black());
         println!("     • Lower latency (no file system polling)");
@@ -188,7 +226,11 @@ export function Button({ children, onClick, variant = "primary" }) {
         println!("     • Better editor integration");
         println!("     • Reduced CPU usage");
     } else {
-        println!("{} {} not found", "⚠".yellow(), "DX LSP extension".bright_cyan());
+        println!(
+            "{} {} not found",
+            "⚠".yellow(),
+            "DX LSP extension".bright_cyan()
+        );
         println!("   {} Falling back to file watching", "→".bright_black());
         println!("   {} To enable LSP mode:", "→".bright_black());
         println!("     1. Install DX editor extension");
@@ -202,18 +244,42 @@ export function Button({ children, onClick, variant = "primary" }) {
     println!("{}", "═".repeat(80).bright_cyan());
 
     println!("\n{}", "Key Takeaways:".yellow().bold());
-    println!("  {}", "1. Traffic Branch System provides intelligent component updates".bright_black());
-    println!("     {} No local changes = Auto-update", "🟢".bright_green());
-    println!("     {} Non-conflicting = Smart merge", "🟡".bright_yellow());
+    println!(
+        "  {}",
+        "1. Traffic Branch System provides intelligent component updates".bright_black()
+    );
+    println!(
+        "     {} No local changes = Auto-update",
+        "🟢".bright_green()
+    );
+    println!(
+        "     {} Non-conflicting = Smart merge",
+        "🟡".bright_yellow()
+    );
     println!("     {} Conflicting = Manual resolution", "🔴".bright_red());
-    println!("\n  {}", "2. LSP Detection optimizes change tracking".bright_black());
-    println!("     {} Editor integration = Faster, more accurate", "📡".bright_blue());
-    println!("     {} No extension = File watching fallback", "👁️".bright_yellow());
+    println!(
+        "\n  {}",
+        "2. LSP Detection optimizes change tracking".bright_black()
+    );
+    println!(
+        "     {} Editor integration = Faster, more accurate",
+        "📡".bright_blue()
+    );
+    println!(
+        "     {} No extension = File watching fallback",
+        "👁️".bright_yellow()
+    );
 
     println!("\n{}", "Usage:".yellow().bold());
-    println!("  {} - Register a component", "forge register <path> --source dx-ui --name Button --version 1.0.0".bright_white());
+    println!(
+        "  {} - Register a component",
+        "forge register <path> --source dx-ui --name Button --version 1.0.0".bright_white()
+    );
     println!("  {} - List components", "forge components".bright_white());
-    println!("  {} - Update component", "forge update Button".bright_white());
+    println!(
+        "  {} - Update component",
+        "forge update Button".bright_white()
+    );
     println!("  {} - Start watching", "forge watch".bright_white());
 
     Ok(())

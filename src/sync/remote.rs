@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures::{SinkExt, StreamExt};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
@@ -9,7 +9,7 @@ use url::Url;
 use super::protocol::SyncManager;
 use crate::crdt::Operation;
 use crate::storage::OperationLog;
-use crate::sync::{GLOBAL_CLOCK, SyncMessage};
+use crate::sync::{SyncMessage, GLOBAL_CLOCK};
 use colored::*;
 use dashmap::DashSet;
 use reqwest::Client;

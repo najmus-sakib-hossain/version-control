@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use crossbeam::channel::{self, Sender};
 use dashmap::DashMap;
 use std::sync::Arc;

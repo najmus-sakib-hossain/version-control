@@ -3,21 +3,21 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
-    Json, Router,
-    extract::{Query, Path as AxumPath},
-    extract::State,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    routing::{get, post, delete},
-    response::{IntoResponse, Response},
+    extract::State,
+    extract::{Path as AxumPath, Query},
     http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{delete, get, post},
+    Json, Router,
 };
 use colored::*;
 use futures::{SinkExt, StreamExt};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::crdt::Operation;
-use crate::storage::{Database, OperationLog, Blob, R2Config, R2Storage};
-use crate::sync::{GLOBAL_CLOCK, SyncManager, SyncMessage};
+use crate::storage::{Blob, Database, OperationLog, R2Config, R2Storage};
+use crate::sync::{SyncManager, SyncMessage, GLOBAL_CLOCK};
 use dashmap::DashSet;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -49,11 +49,11 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
         };
-        
+
         let body = Json(serde_json::json!({
             "error": message,
         }));
-        
+
         (status, body).into_response()
     }
 }
@@ -121,7 +121,11 @@ pub async fn serve(port: u16, path: PathBuf) -> Result<()> {
     // Try to load R2 config
     let r2 = match R2Config::from_env() {
         Ok(config) => {
-            println!("{} R2 Bucket: {}", "✓".green(), config.bucket_name.bright_white());
+            println!(
+                "{} R2 Bucket: {}",
+                "✓".green(),
+                config.bucket_name.bright_white()
+            );
             match R2Storage::new(config) {
                 Ok(storage) => {
                     println!("{} R2 Storage enabled", "✓".green());
@@ -134,7 +138,10 @@ pub async fn serve(port: u16, path: PathBuf) -> Result<()> {
             }
         }
         Err(_) => {
-            println!("{} R2 not configured (set R2_* in .env for blob storage)", "ℹ".blue());
+            println!(
+                "{} R2 not configured (set R2_* in .env for blob storage)",
+                "ℹ".blue()
+            );
             None
         }
     };
@@ -332,21 +339,24 @@ async fn upload_blob(
     State(state): State<AppState>,
     Json(req): Json<UploadBlobRequest>,
 ) -> Result<Json<UploadBlobResponse>, ApiError> {
-    let r2 = state.r2.as_ref()
+    let r2 = state
+        .r2
+        .as_ref()
         .ok_or_else(|| ApiError::BadRequest("R2 storage not configured".to_string()))?;
-    
+
     // Decode base64 content
     use base64::Engine;
-    let content = base64::engine::general_purpose::STANDARD.decode(&req.content)
+    let content = base64::engine::general_purpose::STANDARD
+        .decode(&req.content)
         .map_err(|e| ApiError::BadRequest(format!("Invalid base64: {}", e)))?;
-    
+
     let blob = Blob::from_content(&req.path, content);
     let hash = blob.hash().to_string();
     let size = blob.metadata.size;
-    
+
     // Upload to R2
     let key = r2.upload_blob(&blob).await?;
-    
+
     Ok(Json(UploadBlobResponse { hash, key, size }))
 }
 
@@ -355,12 +365,16 @@ async fn download_blob(
     State(state): State<AppState>,
     AxumPath(hash): AxumPath<String>,
 ) -> Result<Response, ApiError> {
-    let r2 = state.r2.as_ref()
+    let r2 = state
+        .r2
+        .as_ref()
         .ok_or_else(|| ApiError::BadRequest("R2 storage not configured".to_string()))?;
-    
-    let blob = r2.download_blob(&hash).await
+
+    let blob = r2
+        .download_blob(&hash)
+        .await
         .map_err(|_| ApiError::NotFound(format!("Blob not found: {}", hash)))?;
-    
+
     // Return blob content with metadata headers
     Ok((
         StatusCode::OK,
@@ -370,7 +384,8 @@ async fn download_blob(
             ("X-Blob-Size", blob.metadata.size.to_string()),
         ],
         blob.content,
-    ).into_response())
+    )
+        .into_response())
 }
 
 /// Delete blob endpoint
@@ -378,9 +393,11 @@ async fn delete_blob_handler(
     State(state): State<AppState>,
     AxumPath(hash): AxumPath<String>,
 ) -> Result<StatusCode, ApiError> {
-    let r2 = state.r2.as_ref()
+    let r2 = state
+        .r2
+        .as_ref()
         .ok_or_else(|| ApiError::BadRequest("R2 storage not configured".to_string()))?;
-    
+
     r2.delete_blob(&hash).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -390,11 +407,13 @@ async fn check_blob_exists(
     State(state): State<AppState>,
     AxumPath(hash): AxumPath<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let r2 = state.r2.as_ref()
+    let r2 = state
+        .r2
+        .as_ref()
         .ok_or_else(|| ApiError::BadRequest("R2 storage not configured".to_string()))?;
-    
+
     let exists = r2.blob_exists(&hash).await?;
-    
+
     Ok(Json(serde_json::json!({
         "exists": exists,
         "hash": hash,
@@ -419,12 +438,14 @@ async fn batch_upload(
     State(state): State<AppState>,
     Json(req): Json<BatchUploadRequest>,
 ) -> Result<Json<BatchUploadResponse>, ApiError> {
-    let r2 = state.r2.as_ref()
+    let r2 = state
+        .r2
+        .as_ref()
         .ok_or_else(|| ApiError::BadRequest("R2 storage not configured".to_string()))?;
-    
+
     let mut uploaded = Vec::new();
     let mut failed = Vec::new();
-    
+
     use base64::Engine;
     for blob_req in req.blobs {
         match base64::engine::general_purpose::STANDARD.decode(&blob_req.content) {
@@ -432,7 +453,7 @@ async fn batch_upload(
                 let blob = Blob::from_content(&blob_req.path, content);
                 let hash = blob.hash().to_string();
                 let size = blob.metadata.size;
-                
+
                 match r2.upload_blob(&blob).await {
                     Ok(key) => {
                         uploaded.push(UploadBlobResponse { hash, key, size });
@@ -447,6 +468,6 @@ async fn batch_upload(
             }
         }
     }
-    
+
     Ok(Json(BatchUploadResponse { uploaded, failed }))
 }

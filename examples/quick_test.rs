@@ -15,7 +15,10 @@ async fn main() -> Result<()> {
     let blob2 = Blob::from_content("test2.txt", b"Hello Forge!".to_vec());
     println!("   ✅ Blob 1 hash: {}", &blob1.metadata.hash[..16]);
     println!("   ✅ Blob 2 hash: {}", &blob2.metadata.hash[..16]);
-    println!("   ✅ Same content = same hash: {}", blob1.metadata.hash == blob2.metadata.hash);
+    println!(
+        "   ✅ Same content = same hash: {}",
+        blob1.metadata.hash == blob2.metadata.hash
+    );
 
     // Test 2: Binary Serialization
     println!("\n2️⃣  Testing Binary Format...");
@@ -23,7 +26,10 @@ async fn main() -> Result<()> {
     println!("   ✅ Serialized: {} bytes", binary.len());
     let restored = Blob::from_binary(&binary)?;
     println!("   ✅ Deserialized: {} bytes", restored.content.len());
-    println!("   ✅ Round-trip OK: {}", blob1.metadata.hash == restored.metadata.hash);
+    println!(
+        "   ✅ Round-trip OK: {}",
+        blob1.metadata.hash == restored.metadata.hash
+    );
 
     // Test 3: R2 Config
     println!("\n3️⃣  Testing R2 Configuration...");
@@ -61,7 +67,10 @@ async fn main() -> Result<()> {
         offset: 42,
         column: 10,
     };
-    println!("   ✅ Position created: offset={}, line={}, timestamp={}", pos.offset, pos.line, pos.lamport_timestamp);
+    println!(
+        "   ✅ Position created: offset={}, line={}, timestamp={}",
+        pos.offset, pos.line, pos.lamport_timestamp
+    );
 
     // Test 6: Traffic Branches
     println!("\n6️⃣  Testing Traffic Branch Detection...");
@@ -92,10 +101,10 @@ async fn main() -> Result<()> {
         println!("   ✅ forge-demo directory exists");
         let files = vec![
             "README.md",
-            "Cargo.toml", 
+            "Cargo.toml",
             "src/main.rs",
             "src/lib.rs",
-            ".forge/config.toml"
+            ".forge/config.toml",
         ];
         for file in files {
             let path = demo_dir.join(file);
@@ -113,7 +122,10 @@ async fn main() -> Result<()> {
     let mut tasks = JoinSet::new();
     for i in 0..5 {
         tasks.spawn(async move {
-            Blob::from_content(&format!("file{}.txt", i), format!("Content {}", i).into_bytes())
+            Blob::from_content(
+                &format!("file{}.txt", i),
+                format!("Content {}", i).into_bytes(),
+            )
         });
     }
     let mut count = 0;

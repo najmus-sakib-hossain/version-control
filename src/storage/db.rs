@@ -1,6 +1,6 @@
 use anyhow::Result;
 use parking_lot::Mutex;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Arc;
 

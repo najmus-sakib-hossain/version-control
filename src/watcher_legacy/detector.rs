@@ -1,5 +1,6 @@
 use anyhow::Result;
 use colored::*;
+use memmap2::Mmap;
 use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
@@ -7,14 +8,13 @@ use once_cell::sync::Lazy;
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
-use memmap2::Mmap;
 
 use crate::crdt::{Operation, OperationType, Position};
 use crate::storage::OperationLog;
-use crate::sync::{GLOBAL_CLOCK, SyncManager};
+use crate::sync::{SyncManager, GLOBAL_CLOCK};
 use crate::watcher_legacy::cache_warmer;
 use dashmap::DashMap;
 use std::sync::Arc as StdArc;
@@ -34,7 +34,7 @@ fn path_to_string(path: &Path) -> String {
     if let Some(cached) = PATH_STRING_CACHE.get(path) {
         return cached.value().clone();
     }
-    
+
     let s = path.display().to_string();
     PATH_STRING_CACHE.insert(path.to_path_buf(), s.clone());
     s
@@ -46,11 +46,17 @@ fn path_to_string(path: &Path) -> String {
 #[allow(dead_code)]
 fn file_definitely_changed(path: &Path) -> bool {
     // Quick metadata check only (< 1µs) - NO content hashing!
-    let Ok(metadata) = std::fs::metadata(path) else { return true };
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return true;
+    };
     let size = metadata.len();
-    let Ok(mtime) = metadata.modified() else { return true };
-    let Ok(mtime_secs) = mtime.duration_since(std::time::UNIX_EPOCH) else { return true };
-    
+    let Ok(mtime) = metadata.modified() else {
+        return true;
+    };
+    let Ok(mtime_secs) = mtime.duration_since(std::time::UNIX_EPOCH) else {
+        return true;
+    };
+
     // Check cache: if mtime+size match, file definitely hasn't changed
     if let Some(cached) = FILE_HASH_CACHE.get(path) {
         let (_hash, cached_mtime, cached_size) = *cached.value();
@@ -58,7 +64,7 @@ fn file_definitely_changed(path: &Path) -> bool {
             return false; // File hasn't changed, skip processing!
         }
     }
-    
+
     // File changed or not cached - update cache with new metadata
     // We'll compute hash lazily only if we actually need to diff
     FILE_HASH_CACHE.insert(path.to_path_buf(), (0, mtime_secs.as_secs(), size));
@@ -66,14 +72,14 @@ fn file_definitely_changed(path: &Path) -> bool {
 }
 
 // ⚡⚡ DUAL-WATCHER SYSTEM: Ultra-fast + Quality modes ⚡⚡
-// 
+//
 // Mode 1: ULTRA-FAST (<20µs target) - Metadata-only change detection
 //   - NO file reads, NO system calls (even metadata is skipped!)
 //   - Uses atomic counter for deduplication (no time syscalls)
 //   - NO line counting, NO operation detection
 //   - Just logs that a file changed (for instant UI feedback)
 //
-// Mode 2: QUALITY (60µs target) - Full operation detection  
+// Mode 2: QUALITY (60µs target) - Full operation detection
 //   - Full file reads with line numbers
 //   - Complete operation detection and diffs
 //   - Runs in background after ultra-fast mode
@@ -94,19 +100,19 @@ fn detect_rapid_change(path: &Path) -> Option<u64> {
     if !RAPID_MODE_ENABLED {
         return Some(0);
     }
-    
+
     let start = Instant::now();
-    
+
     // Ultra-fast: NO syscalls! Just use atomic sequence counter
     // This achieves sub-10µs performance by avoiding ALL system calls
     let sequence = RAPID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    
+
     // Update cache (notify debouncer already handles duplicates, no need for extra check)
     // We trust that if we got the event, it's a real change
     FILE_HASH_CACHE.insert(path.to_path_buf(), (0, sequence, 0));
-    
+
     let elapsed = start.elapsed().as_micros() as u64;
-    
+
     // Return timing (will be logged with quality results if ops detected)
     Some(elapsed)
 }
@@ -119,12 +125,12 @@ fn detect_quality_operations(
     rapid_time_us: u64,
 ) -> Result<DetectionReport> {
     let start = Instant::now();
-    
+
     // Production mode: always use quality detection
     if !RAPID_MODE_ENABLED {
         let report = detect_operations(path, actor_id, false)?;
         let total_time = start.elapsed().as_micros();
-        
+
         if !report.ops.is_empty() {
             println!(
                 "⚙️ [QUALITY ONLY {}µs] {} - {} ops",
@@ -133,38 +139,44 @@ fn detect_quality_operations(
                 report.ops.len()
             );
         }
-        
+
         return Ok(report);
     }
-    
+
     // ⚡ Use original detect_operations (it was already optimized to 60µs!)
     // Pass true to suppress internal logging (we'll log here instead)
     let report = detect_operations(path, actor_id, true)?;
-    
+
     let quality_time = start.elapsed().as_micros();
     let total_time = rapid_time_us as u128 + quality_time;
-    
+
     // Log quality detection ONLY when operations were detected
     if !report.ops.is_empty() {
         // First log RAPID timing
-        let rapid_marker = if (rapid_time_us as u128) <= RAPID_TARGET_US { "⚡" } else { "🐌" };
+        let rapid_marker = if (rapid_time_us as u128) <= RAPID_TARGET_US {
+            "⚡"
+        } else {
+            "🐌"
+        };
         println!(
             "{} [RAPID {}µs] {} changed",
             rapid_marker,
             rapid_time_us,
             path_to_string(path).bright_cyan(),
         );
-        
+
         // Then log QUALITY timing
-        let quality_marker = if quality_time <= QUALITY_TARGET_US { "✨" } else { "🐢" };
+        let quality_marker = if quality_time <= QUALITY_TARGET_US {
+            "✨"
+        } else {
+            "🐢"
+        };
         println!(
             "{} [QUALITY {}µs | total {}µs]",
-            quality_marker,
-            quality_time,
-            total_time,
+            quality_marker, quality_time, total_time,
         );
     }
-    
+
     Ok(report)
 }
 
@@ -187,7 +199,7 @@ fn line_col_fast(...) { ... }
 const PROFILE_DETECT: bool = false;
 
 // 🎯 Performance targets (production-ready)
-const RAPID_TARGET_US: u128 = 35;  // Rapid mode: <35µs (typically 1-2µs)
+const RAPID_TARGET_US: u128 = 35; // Rapid mode: <35µs (typically 1-2µs)
 const QUALITY_TARGET_US: u128 = 60; // Quality mode: <60µs
 
 // 🚀 Watcher mode (ultra-fast 1ms debounce only)
@@ -215,7 +227,7 @@ pub async fn start_watching(
     let mode = WatchMode::from_env();
 
     // Production mode: clean startup (no console spam)
-    
+
     match mode {
         WatchMode::Debounced(debounce) => {
             start_debounced_watcher(path, oplog, actor_id, sync_mgr, debounce).await
@@ -232,7 +244,7 @@ async fn start_debounced_watcher(
     debounce: Duration,
 ) -> Result<()> {
     let (tx, rx) = channel();
-    
+
     let mut debouncer = new_debouncer(debounce, None, tx)?;
     debouncer.watch(&path, RecursiveMode::Recursive)?;
 
@@ -251,7 +263,7 @@ async fn process_events_loop(
             Ok(events) => {
                 for event in events {
                     let start = Instant::now();
-                    
+
                     match &event.kind {
                         EventKind::Modify(ModifyKind::Name(mode)) => match *mode {
                             RenameMode::From => {
@@ -324,7 +336,13 @@ async fn process_events_loop(
                                     ));
 
                                     let detect_us = detect_start.elapsed().as_micros();
-                                    emit_operations(vec![op], detect_us, start, oplog.as_ref(), &sync_mgr)?;
+                                    emit_operations(
+                                        vec![op],
+                                        detect_us,
+                                        start,
+                                        oplog.as_ref(),
+                                        &sync_mgr,
+                                    )?;
                                 }
                             }
                         }
@@ -427,34 +445,34 @@ fn emit_operations(
     if ops.is_empty() {
         return Ok(());
     }
-    
+
     // Store operations for diff display AFTER timing
     let ops_for_diff = ops.clone();
-    
+
     for op in ops {
         // 🔥 FAST PATH: Skip timing for appends - just do it
         let append_result = oplog.append(op.clone())?;
-        
+
         if append_result {
             // 🔥 FAST PATH: Non-blocking publish
             if let Some(mgr) = sync_mgr {
                 let _ = mgr.publish(StdArc::new(op.clone()));
             }
-            
+
             let total_us = start.elapsed().as_micros();
-            
+
             // 🎯 Only print if outside normal range or below target performance
             if total_us < RAPID_TARGET_US || total_us > 15_000 {
                 print_operation(&op, total_us, detect_us, 0);
             }
-            
+
             record_throughput(total_us);
         }
     }
-    
+
     // 🎨 Display operation details AFTER timing (doesn't count in performance metrics)
     print_operation_diff(&ops_for_diff);
-    
+
     Ok(())
 }
 
@@ -475,15 +493,15 @@ fn process_path(
     }
 
     // ⚡⚡ DUAL-WATCHER SYSTEM ⚡⚡
-    
+
     // Step 1: ULTRA-FAST MODE (<20µs) - Zero-syscall rapid change detection
     let rapid_result = detect_rapid_change(path);
-    
+
     // If no change detected by rapid mode, we're done!
     let Some(rapid_time_us) = rapid_result else {
         return Ok(());
     };
-    
+
     // Step 2: QUALITY MODE (60µs) - Full operation detection in background
     // This provides complete details with line numbers, diffs, etc.
     match detect_quality_operations(path, actor_id, rapid_time_us) {
@@ -575,7 +593,11 @@ fn handle_rename_transition(
 }
 
 #[inline(always)]
-fn detect_operations(path: &Path, actor_id: &str, suppress_logging: bool) -> Result<DetectionReport> {
+fn detect_operations(
+    path: &Path,
+    actor_id: &str,
+    suppress_logging: bool,
+) -> Result<DetectionReport> {
     detect_operations_with_content(path, actor_id, None, suppress_logging)
 }
 
@@ -587,7 +609,7 @@ fn detect_operations_with_content(
     suppress_logging: bool,
 ) -> Result<DetectionReport> {
     let detect_start = Instant::now();
-    
+
     // 🚀 OPTIMIZATION: Zero-allocation detection using path references directly
     let timings = DetectionTimings::default();
 
@@ -605,12 +627,26 @@ fn detect_operations_with_content(
             Some(text) => text,
             None => match read_file_fast(path) {
                 Ok(text) => text,
-                Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging)),
-            }
+                Err(_) => {
+                    return Ok(finalize_detection(
+                        path,
+                        detect_start,
+                        timings,
+                        Vec::new(),
+                        suppress_logging,
+                    ))
+                }
+            },
         };
 
         if new_content.len() as u64 > MAX_TRACKED_FILE_BYTES {
-            return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging));
+            return Ok(finalize_detection(
+                path,
+                detect_start,
+                timings,
+                Vec::new(),
+                suppress_logging,
+            ));
         }
 
         // 🚀 Zero-copy snapshot building
@@ -623,7 +659,13 @@ fn detect_operations_with_content(
             },
             actor_id.to_string(),
         ));
-        return Ok(finalize_detection(path, detect_start, timings, vec![op], suppress_logging));
+        return Ok(finalize_detection(
+            path,
+            detect_start,
+            timings,
+            vec![op],
+            suppress_logging,
+        ));
     }
 
     let mut prev = previous_snapshot.unwrap();
@@ -633,18 +675,32 @@ fn detect_operations_with_content(
         Some(text) => text,
         None => match read_file_fast(path) {
             Ok(text) => text,
-            Err(_) => return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging)),
-        }
+            Err(_) => {
+                return Ok(finalize_detection(
+                    path,
+                    detect_start,
+                    timings,
+                    Vec::new(),
+                    suppress_logging,
+                ))
+            }
+        },
     };
-    
+
     // 🚀 OPTIMIZATION 1: Ultra-fast length check before expensive comparison
     if new_content.len() == prev.content.len() {
         // 🚀 OPTIMIZATION 2: Byte-level equality check (faster than char-by-char)
         if new_content.as_bytes() == prev.content.as_bytes() {
-            return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging));
+            return Ok(finalize_detection(
+                path,
+                detect_start,
+                timings,
+                Vec::new(),
+                suppress_logging,
+            ));
         }
     }
-    
+
     // 🔥 FAST PATH: Simple append detection (most common edit pattern)
     if new_content.len() > prev.content.len() && new_content.starts_with(&prev.content) {
         let appended_slice = &new_content[prev.content.len()..];
@@ -657,13 +713,7 @@ fn detect_operations_with_content(
             let op = register_operation(Operation::new(
                 path_to_string(path),
                 OperationType::Insert {
-                    position: Position::new(
-                        line,
-                        col,
-                        char_offset,
-                        actor_id.to_string(),
-                        lamport,
-                    ),
+                    position: Position::new(line, col, char_offset, actor_id.to_string(), lamport),
                     content: appended.clone(),
                     length: appended_len,
                 },
@@ -671,20 +721,38 @@ fn detect_operations_with_content(
             ));
             extend_snapshot(&mut prev, &appended);
             update_prev_state(path, Some(prev));
-            return Ok(finalize_detection(path, detect_start, timings, vec![op], suppress_logging));
+            return Ok(finalize_detection(
+                path,
+                detect_start,
+                timings,
+                vec![op],
+                suppress_logging,
+            ));
         }
     }
-    
+
     // 🚀 Full diff path - build new snapshot with optimizations
     let new_snapshot = build_snapshot_fast(&new_content);
     if new_snapshot.byte_len > MAX_TRACKED_FILE_BYTES {
         update_prev_state(path, None);
-        return Ok(finalize_detection(path, detect_start, timings, Vec::new(), suppress_logging));
+        return Ok(finalize_detection(
+            path,
+            detect_start,
+            timings,
+            Vec::new(),
+            suppress_logging,
+        ));
     }
 
     let ops = fast_diff_ops(path, actor_id, &prev, &new_snapshot);
     update_prev_state(path, Some(new_snapshot));
-    Ok(finalize_detection(path, detect_start, timings, ops, suppress_logging))
+    Ok(finalize_detection(
+        path,
+        detect_start,
+        timings,
+        ops,
+        suppress_logging,
+    ))
 }
 
 // 🚀 ULTRA-FAST snapshot building - defers expensive operations
@@ -692,14 +760,14 @@ fn detect_operations_with_content(
 #[inline(always)]
 fn build_snapshot_fast(content: &str) -> FileSnapshot {
     let byte_len = content.len() as u64;
-    
+
     // 🔥 OPTIMIZATION: Fast char counting for ASCII (O(1) vs O(n))
     let char_len = if content.is_ascii() {
         content.len()
     } else {
         content.chars().count()
     };
-    
+
     // 🚀 OPTIMIZATION: Lazy char_to_byte mapping
     // For ASCII: empty vec (compute on-demand when needed)
     // For non-ASCII: build once and cache
@@ -714,21 +782,21 @@ fn build_snapshot_fast(content: &str) -> FileSnapshot {
         mapping.push(content.len());
         mapping
     };
-    
+
     // 🔥 OPTIMIZATION: Ultra-fast newline detection using memchr
     // This is 10-100x faster than iterator-based scanning
     let mut line_starts = vec![0];
     if memchr::memrchr(b'\n', content.as_bytes()).is_some() {
         let bytes = content.as_bytes();
         let mut pos = 0;
-        
+
         // SIMD-accelerated newline search
         while let Some(idx) = memchr::memchr(b'\n', &bytes[pos..]) {
             pos += idx + 1;
-            line_starts.push(if content.is_ascii() { 
-                pos  // Fast path: byte index == char index
-            } else { 
-                content[..pos].chars().count()  // Slow path: must count chars
+            line_starts.push(if content.is_ascii() {
+                pos // Fast path: byte index == char index
+            } else {
+                content[..pos].chars().count() // Slow path: must count chars
             });
         }
     }
@@ -750,13 +818,13 @@ fn finalize_detection(
     suppress_logging: bool,
 ) -> DetectionReport {
     timings.total_us = detect_start.elapsed().as_micros();
-    
+
     // ⚡ DUAL-WATCHER: Suppress logging when called from dual-watcher mode
     // When dual-watcher is enabled, detect_quality_operations handles all logging
     if !suppress_logging {
         profile_detect(path, &timings, !ops.is_empty());
     }
-    
+
     DetectionReport { ops, timings }
 }
 
@@ -765,7 +833,7 @@ fn profile_detect(path: &Path, timings: &DetectionTimings, has_ops: bool) {
     if !PROFILE_DETECT && !has_ops {
         return;
     }
-    
+
     // When profiling is enabled, show all logs
     // When profiling is disabled, only show if operations were created
     if PROFILE_DETECT || has_ops {
@@ -784,28 +852,36 @@ fn extend_snapshot(snapshot: &mut FileSnapshot, appended: &str) {
 
     let base_byte = snapshot.content.len();
     let is_ascii = appended.is_ascii();
-    
+
     // Fast char count
     let appended_char_count = if is_ascii {
         appended.len()
     } else {
         appended.chars().count()
     };
-    
+
     // Only build char_to_byte if not ASCII
     if !snapshot.char_to_byte.is_empty() {
         snapshot.char_to_byte.pop(); // Remove sentinel
-        
+
         if is_ascii {
             // Fast path for ASCII
-            snapshot.char_to_byte.extend((0..appended.len()).map(|i| base_byte + i));
+            snapshot
+                .char_to_byte
+                .extend((0..appended.len()).map(|i| base_byte + i));
         } else {
             // Slow path for multi-byte
-            snapshot.char_to_byte.extend(appended.char_indices().map(|(offset, _)| base_byte + offset));
+            snapshot.char_to_byte.extend(
+                appended
+                    .char_indices()
+                    .map(|(offset, _)| base_byte + offset),
+            );
         }
-        snapshot.char_to_byte.push(snapshot.content.len() + appended.len());
+        snapshot
+            .char_to_byte
+            .push(snapshot.content.len() + appended.len());
     }
-    
+
     // Update line starts using memchr
     let appended_bytes = appended.as_bytes();
     let mut pos = 0;
@@ -857,14 +933,14 @@ fn fast_diff_ops(
     // Fast path: check if only prefix/suffix changed using byte comparison
     let old_bytes = old_snap.content.as_bytes();
     let new_bytes = new_snap.content.as_bytes();
-    
+
     let change = match compute_change_range_fast(old_bytes, new_bytes, &old_snap, &new_snap) {
         Some(range) => range,
         None => return Vec::new(),
     };
 
     let (old_start, old_end, new_start, new_end) = change;
-    
+
     // 🔥 FIX: Safe byte range calculation with bounds checking
     // Get byte ranges - ensure indices are within bounds
     let old_start_byte = if old_start < old_snap.char_to_byte.len() {
@@ -872,19 +948,19 @@ fn fast_diff_ops(
     } else {
         old_snap.content.len()
     };
-    
+
     let old_end_byte = if old_end < old_snap.char_to_byte.len() {
         old_snap.char_to_byte[old_end]
     } else {
         old_snap.content.len()
     };
-    
+
     let new_start_byte = if new_start < new_snap.char_to_byte.len() {
         new_snap.char_to_byte[new_start]
     } else {
         new_snap.content.len()
     };
-    
+
     let new_end_byte = if new_end < new_snap.char_to_byte.len() {
         new_snap.char_to_byte[new_end]
     } else {
@@ -931,7 +1007,7 @@ fn ensure_char_mapping(snapshot: &FileSnapshot) -> std::borrow::Cow<'_, FileSnap
     if !snapshot.char_to_byte.is_empty() {
         return std::borrow::Cow::Borrowed(snapshot);
     }
-    
+
     // Build mapping for ASCII content
     let mut new_snap = snapshot.clone();
     new_snap.char_to_byte = (0..=snapshot.content.len()).collect();
@@ -957,11 +1033,11 @@ fn compute_change_range_fast(
     let common_prefix_bytes = if old_bytes.len() > 8192 && new_bytes.len() > 8192 {
         // Large files: use rayon for parallel prefix search
         use rayon::prelude::*;
-        
+
         let chunk_size = 4096;
         let min_len = old_bytes.len().min(new_bytes.len());
         let num_chunks = (min_len + chunk_size - 1) / chunk_size;
-        
+
         (0..num_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
@@ -969,7 +1045,7 @@ fn compute_change_range_fast(
                 let end = (start + chunk_size).min(min_len);
                 let chunk_old = &old_bytes[start..end];
                 let chunk_new = &new_bytes[start..end];
-                
+
                 // Find first difference in this chunk
                 chunk_old
                     .iter()
@@ -989,7 +1065,7 @@ fn compute_change_range_fast(
             .take_while(|(a, b)| a == b)
             .count()
     };
-    
+
     // Find common suffix at byte level
     let remaining_old = old_bytes.len() - common_prefix_bytes;
     let remaining_new = new_bytes.len() - common_prefix_bytes;
@@ -1004,46 +1080,54 @@ fn compute_change_range_fast(
     } else {
         0
     };
-    
+
     // 🔥 FIX: Handle ASCII fast path (char_to_byte is empty for ASCII)
     let old_is_ascii = old_snapshot.char_to_byte.is_empty();
     let new_is_ascii = new_snapshot.char_to_byte.is_empty();
-    
+
     // Convert byte positions to char positions
     let prefix_chars = if old_is_ascii {
         common_prefix_bytes // For ASCII: byte pos == char pos
     } else {
-        old_snapshot.char_to_byte
+        old_snapshot
+            .char_to_byte
             .iter()
             .position(|&b| b >= common_prefix_bytes)
             .unwrap_or(old_snapshot.char_len)
     };
-    
+
     let old_suffix_byte_pos = old_bytes.len() - common_suffix_bytes;
     let old_suffix_chars = if old_is_ascii {
         old_suffix_byte_pos // For ASCII: byte pos == char pos
     } else {
-        old_snapshot.char_to_byte
+        old_snapshot
+            .char_to_byte
             .iter()
             .position(|&b| b >= old_suffix_byte_pos)
             .unwrap_or(old_snapshot.char_len)
     };
-    
+
     let new_suffix_byte_pos = new_bytes.len() - common_suffix_bytes;
     let new_suffix_chars = if new_is_ascii {
         new_suffix_byte_pos // For ASCII: byte pos == char pos
     } else {
-        new_snapshot.char_to_byte
+        new_snapshot
+            .char_to_byte
             .iter()
             .position(|&b| b >= new_suffix_byte_pos)
             .unwrap_or(new_snapshot.char_len)
     };
-    
+
     if prefix_chars == old_snapshot.char_len && prefix_chars == new_snapshot.char_len {
         return None;
     }
 
-    Some((prefix_chars, old_suffix_chars, prefix_chars, new_suffix_chars))
+    Some((
+        prefix_chars,
+        old_suffix_chars,
+        prefix_chars,
+        new_suffix_chars,
+    ))
 }
 
 fn should_track(path: &Path) -> bool {
@@ -1056,7 +1140,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
     if total_us >= 5_000 && total_us <= 15_000 {
         return;
     }
-    
+
     // 🚀 Performance indicator based on production targets
     let perf_indicator = if total_us < 50 {
         "🏆" // Elite: <50µs (sub-35µs rapid + quality)
@@ -1069,7 +1153,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
     } else {
         "🐌" // Very slow: >5ms (investigate!)
     };
-    
+
     let time = format!("[{}µs | detect {}µs]", total_us, detect_us);
     let time_colored = if total_us < RAPID_TARGET_US {
         time.bright_green().bold()
@@ -1087,7 +1171,11 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
 
     // 📝 Build detailed operation info with content preview
     let (action, details) = match &op.op_type {
-        OperationType::Insert { position, content, length } => {
+        OperationType::Insert {
+            position,
+            content,
+            length,
+        } => {
             let preview = truncate_with_preview(content, 40);
             (
                 "INSERT".green(),
@@ -1100,17 +1188,10 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
                 ),
             )
         }
-        OperationType::Delete { position, length } => {
-            (
-                "DELETE".red(),
-                format!(
-                    "{}:{} -{} chars",
-                    position.line,
-                    position.column,
-                    length
-                ),
-            )
-        }
+        OperationType::Delete { position, length } => (
+            "DELETE".red(),
+            format!("{}:{} -{} chars", position.line, position.column, length),
+        ),
         OperationType::Replace {
             position,
             old_content,
@@ -1137,9 +1218,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
                 format!("file ({} bytes, {} lines)", size, lines),
             )
         }
-        OperationType::FileDelete => {
-            ("DELETE".bright_red(), "file".to_string())
-        }
+        OperationType::FileDelete => ("DELETE".bright_red(), "file".to_string()),
         OperationType::FileRename { old_path, new_path } => {
             let old_name = std::path::Path::new(old_path)
                 .file_name()
@@ -1180,16 +1259,21 @@ fn truncate_with_preview(s: &str, max_len: usize) -> String {
 // 🎨 Display operation details showing what changed (displayed AFTER timing)
 fn print_operation_diff(ops: &[Operation]) {
     use colored::*;
-    
+
     for op in ops {
         let filename = std::path::Path::new(&op.file_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(&op.file_path);
-        
+
         match &op.op_type {
-            OperationType::Insert { position, content, length: _ } => {
-                println!("  {} {} @ {}:{}", 
+            OperationType::Insert {
+                position,
+                content,
+                length: _,
+            } => {
+                println!(
+                    "  {} {} @ {}:{}",
                     "+".green().bold(),
                     filename.bright_cyan(),
                     position.line,
@@ -1205,7 +1289,8 @@ fn print_operation_diff(ops: &[Operation]) {
                 }
             }
             OperationType::Delete { position, length } => {
-                println!("  {} {} @ {}:{} ({} chars)",
+                println!(
+                    "  {} {} @ {}:{} ({} chars)",
                     "-".red().bold(),
                     filename.bright_cyan(),
                     position.line,
@@ -1213,8 +1298,13 @@ fn print_operation_diff(ops: &[Operation]) {
                     length
                 );
             }
-            OperationType::Replace { position, old_content, new_content } => {
-                println!("  {} {} @ {}:{}",
+            OperationType::Replace {
+                position,
+                old_content,
+                new_content,
+            } => {
+                println!(
+                    "  {} {} @ {}:{}",
                     "~".yellow().bold(),
                     filename.bright_cyan(),
                     position.line,
@@ -1235,7 +1325,8 @@ fn print_operation_diff(ops: &[Operation]) {
                 }
             }
             OperationType::FileCreate { content } => {
-                println!("  {} {} ({} lines)",
+                println!(
+                    "  {} {} ({} lines)",
                     "✨".bright_green(),
                     filename.bright_cyan(),
                     content.lines().count()
@@ -1245,7 +1336,11 @@ fn print_operation_diff(ops: &[Operation]) {
                     println!("    {}", line.bright_black());
                 }
                 if content.lines().count() > 10 {
-                    println!("    {} {} more lines", "...".bright_black(), content.lines().count() - 10);
+                    println!(
+                        "    {} {} more lines",
+                        "...".bright_black(),
+                        content.lines().count() - 10
+                    );
                 }
             }
             OperationType::FileDelete => {
@@ -1260,7 +1355,8 @@ fn print_operation_diff(ops: &[Operation]) {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(new_path);
-                println!("  {} {} → {}",
+                println!(
+                    "  {} {} → {}",
                     "📋".bright_yellow(),
                     old_name.yellow(),
                     new_name.bright_cyan()
@@ -1307,7 +1403,7 @@ fn move_prev_state_entry(old: &Path, new: &Path) {
         PREV_STATE.insert(new.to_path_buf(), snapshot);
         enforce_prev_state_limit();
     }
-    
+
     // Also move file handle in pool
     let mut pool = cache_warmer::FILE_POOL.write();
     if let Some(file) = pool.remove(old) {
@@ -1415,15 +1511,17 @@ fn read_file_fast(path: &Path) -> Result<String> {
             return Ok(std::str::from_utf8(&mmap)?.to_string());
         }
     } // Drop read lock before acquiring write lock
-    
+
     // SLOW PATH: Not in pool - open it, add to pool, and read
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file)? };
     let content = std::str::from_utf8(&mmap)?.to_string();
-    
+
     // Add to pool for next time (write lock held briefly)
-    cache_warmer::FILE_POOL.write().insert(path.to_path_buf(), Arc::new(file));
-    
+    cache_warmer::FILE_POOL
+        .write()
+        .insert(path.to_path_buf(), Arc::new(file));
+
     Ok(content)
 }
 

@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::path::Path;
 
 pub use annotations::Annotation;
-pub use traffic_branch::{ComponentStateManager, TrafficBranch, UpdateResult, apply_update};
+pub use traffic_branch::{apply_update, ComponentStateManager, TrafficBranch, UpdateResult};
 
 use crate::crdt::{Anchor, Position};
 use crate::storage::Database;

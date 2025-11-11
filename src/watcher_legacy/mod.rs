@@ -1,16 +1,16 @@
-pub mod detector;
 pub mod cache_warmer;
+pub mod detector;
 pub mod lsp_detector;
 
 use anyhow::Result;
+use colored::Colorize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
-use colored::Colorize;
 
-use crate::storage::{Database, OperationLog};
-use crate::sync::{SyncManager, remote::connect_peer};
 use crate::crdt::Operation;
+use crate::storage::{Database, OperationLog};
+use crate::sync::{remote::connect_peer, SyncManager};
 
 /// Rapid change notification - ultra-fast (<35µs typical, 1-2µs best case)
 #[derive(Debug, Clone)]
@@ -65,7 +65,11 @@ pub struct ForgeWatcher {
 
 impl ForgeWatcher {
     /// Create a new forge watcher
-    pub async fn new<P: Into<PathBuf>>(path: P, enable_sync: bool, peers: Vec<String>) -> Result<Self> {
+    pub async fn new<P: Into<PathBuf>>(
+        path: P,
+        enable_sync: bool,
+        peers: Vec<String>,
+    ) -> Result<Self> {
         let path_buf = path.into();
         let repo_root = path_buf.canonicalize().unwrap_or(path_buf);
         let forge_dir = repo_root.join(".dx/forge");
@@ -123,12 +127,12 @@ impl ForgeWatcher {
             sync_mgr,
         })
     }
-    
+
     /// Run the watcher (blocking)
     pub async fn run(self) -> Result<()> {
         // Check if LSP support is available
         let lsp_available = lsp_detector::detect_lsp_support().await?;
-        
+
         if lsp_available {
             // Use LSP-based detection
             lsp_detector::start_lsp_monitoring(
@@ -136,7 +140,8 @@ impl ForgeWatcher {
                 self.oplog,
                 self.actor_id,
                 self.sync_mgr,
-            ).await
+            )
+            .await
         } else {
             // Fall back to file system watching
             println!(
@@ -150,7 +155,8 @@ impl ForgeWatcher {
                 self.actor_id,
                 self.repo_id,
                 self.sync_mgr,
-            ).await
+            )
+            .await
         }
     }
 }
