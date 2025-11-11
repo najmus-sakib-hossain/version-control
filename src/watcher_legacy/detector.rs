@@ -15,7 +15,7 @@ use memmap2::Mmap;
 use crate::crdt::{Operation, OperationType, Position};
 use crate::storage::OperationLog;
 use crate::sync::{GLOBAL_CLOCK, SyncManager};
-use crate::watcher::cache_warmer;
+use crate::watcher_legacy::cache_warmer;
 use dashmap::DashMap;
 use std::sync::Arc as StdArc;
 use uuid::Uuid;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
-use dx_forge::{context, server, storage, watcher};
+use dx_forge::{context, server, storage, watcher_legacy};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -216,7 +216,7 @@ async fn main() -> Result<()> {
                 "{}",
                 "✔ Starting operation-level tracking...".cyan().bold()
             );
-            watcher::watch(path, sync, peer).await?;
+            watcher_legacy::watch(path, sync, peer).await?;
         }
 
         Commands::OpLog { file, limit } => {

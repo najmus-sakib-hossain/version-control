@@ -1,0 +1,193 @@
+# Orchestration Configuration
+# Defines tool execution order and coordination strategy
+
+[orchestration]
+version = "1.0"
+description = "DX Tools Orchestration for Production Builds"
+
+# Global settings
+parallel_execution = false
+fail_fast = true
+max_retries = 3
+timeout_global_seconds = 300
+
+# Execution phases (run in order)
+[phases]
+
+[phases.pre]
+description = "Pre-processing and validation"
+tools = [
+    "dx-check",     # Run validation first
+    "dx-env",       # Load environment
+]
+parallel = true
+required = true
+
+[phases.main]
+description = "Core processing - styles and components"
+tools = [
+    "dx-style",     # Process CSS first (priority: 100)
+    "dx-fonts",     # Load fonts (priority: 90)
+    "dx-ui",        # Inject UI components (priority: 80)
+    "dx-icons",     # Inject icons (priority: 70)
+]
+parallel = false
+required = true
+
+[phases.components]
+description = "Component-specific processing"
+tools = [
+    "dx-i18n",      # Internationalization (priority: 60)
+    "dx-charts",    # Data visualization (priority: 50)
+    "dx-forms",     # Form validation (priority: 40)
+]
+parallel = true
+required = false
+
+[phases.post]
+description = "Post-processing and optimization"
+tools = [
+    "dx-bundle",    # Bundle optimization (priority: 30)
+    "dx-compress",  # Compression (priority: 20)
+    "dx-deploy",    # Deployment prep (priority: 10)
+]
+parallel = false
+required = false
+
+# Tool-specific overrides
+[tools.dx-style]
+priority_override = 100
+always_run = true
+cache_enabled = true
+
+[tools.dx-ui]
+priority_override = 80
+conditional_run = true
+depends_on = ["dx-style", "dx-fonts"]
+
+[tools.dx-icons]
+priority_override = 70
+conditional_run = true
+depends_on = ["dx-ui"]
+
+[tools.dx-check]
+priority_override = 110
+always_run = true
+fail_on_warning = false
+
+# Traffic branch configuration
+[traffic]
+enabled = true
+default_branch = "yellow" # green | yellow | red
+
+# Auto-update on green (safe changes)
+auto_update_green = true
+green_triggers = [
+    "*.css",
+    "*.scss",
+    "*.md",
+    "*.json",
+]
+
+# Prompt on yellow (potential conflicts)
+auto_merge_yellow = false
+yellow_triggers = [
+    "*.tsx",
+    "*.jsx",
+    "*.vue",
+    "**/components/**",
+]
+
+# Block on red (breaking changes)
+require_manual_red = true
+red_triggers = [
+    "**/api/**",
+    "**/types/**",
+    "package.json",
+    "*.config.js",
+]
+
+# Watcher configuration
+[watcher]
+enabled = true
+debounce_ms = 100
+watch_patterns = [
+    "src/**",
+    "components/**",
+    "styles/**",
+]
+ignore_patterns = [
+    "node_modules/**",
+    ".git/**",
+    ".dx/**",
+    "dist/**",
+    "build/**",
+]
+
+# LSP integration
+[lsp]
+enabled = true
+server_command = "typescript-language-server"
+server_args = ["--stdio"]
+capabilities = [
+    "textDocument/didChange",
+    "textDocument/completion",
+    "textDocument/hover",
+]
+semantic_tokens = true
+
+# Storage and sync
+[storage]
+backend = "r2" # r2 | s3 | local
+cache_dir = ".dx/cache"
+blob_dir = ".dx/forge/objects"
+compression = "zstd"
+deduplicate = true
+
+[storage.r2]
+bucket = "dx-forge-production"
+account_id = "${DX_R2_ACCOUNT_ID}"
+access_key = "${DX_R2_ACCESS_KEY}"
+secret_key = "${DX_R2_SECRET_KEY}"
+endpoint = "https://storage.dx.tools"
+
+# Performance tuning
+[performance]
+max_concurrent_tools = 4
+tool_timeout_seconds = 60
+cache_ttl_hours = 168
+blob_chunk_size_mb = 10
+max_memory_mb = 2048
+
+# Logging and monitoring
+[logging]
+level = "info" # debug | info | warn | error
+format = "json"
+output = "stdout"
+file_path = ".dx/logs/orchestrator.log"
+rotate_size_mb = 100
+max_files = 10
+
+# Error handling
+[error_handling]
+fail_fast = true
+retry_on_failure = true
+max_retries = 3
+retry_delay_ms = 1000
+rollback_on_error = true
+
+# Notifications (optional)
+[notifications]
+enabled = false
+on_success = false
+on_failure = true
+on_warning = false
+channels = ["slack", "email"]
+
+[notifications.slack]
+webhook_url = "${DX_SLACK_WEBHOOK}"
+
+[notifications.email]
+smtp_server = "smtp.dx.tools"
+from = "forge@dx.tools"
+to = ["team@dx.tools"]

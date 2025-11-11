@@ -1,50 +1,120 @@
-//! # Forge - Ultra-Fast File Watcher Library
+//! # DX Forge - Production-Ready VCS and Orchestration Engine
 //!
-//! Production-ready file watcher with dual-mode event system optimized for DX tools.
+//! Forge is the orchestration backbone for the DX tools ecosystem, providing:
+//! - Content-addressable storage with SHA-256 blob hashing
+//! - Git-compatible versioning with traffic branch safety system
+//! - Dual-watcher architecture (LSP + File System monitoring)
+//! - Tool orchestration with priority-based execution and dependency resolution
+//! - Component injection for zero-bloat dependency management
 //!
-//! ## Features
+//! ## Architecture Overview
 //!
-//! - **Rapid Events** (<35µs): Ultra-fast change notifications for immediate UI feedback
-//! - **Quality Events** (<60µs): Complete operation details with line numbers and diffs
-//! - **Zero Environment Variables**: Production-ready with optimal hardcoded settings
-//! - **CRDT-based**: Conflict-free replicated data types for distributed sync
-//! - **Memory-mapped I/O**: Leverages OS page cache for sub-microsecond reads
+//! Forge eliminates node_modules bloat by detecting code patterns via LSP,
+//! injecting only needed components directly into user files, and coordinating
+//! DX tool execution with traffic branch safety logic.
 //!
-//! ## Quick Start
+//! ### Core Components
+//!
+//! - **Orchestrator**: Coordinates tool execution with dependency resolution
+//! - **Dual-Watcher**: Monitors LSP + file system changes in real-time
+//! - **Traffic Branch System**: Green (auto), Yellow (merge), Red (manual)
+//! - **Storage Layer**: Content-addressable blobs with R2 cloud sync
+//!
+//! ## Quick Start - Tool Development
 //!
 //! ```rust,no_run
-//! use forge::{ForgeWatcher, ForgeEvent};
+//! use dx_forge::{DxTool, ExecutionContext, ToolOutput, Orchestrator};
+//! use async_trait::async_trait;
+//! use anyhow::Result;
+//!
+//! struct MyDxTool;
+//!
+//! #[async_trait]
+//! impl DxTool for MyDxTool {
+//!     fn name(&self) -> &str { "dx-mytool" }
+//!     fn version(&self) -> &str { "1.0.0" }
+//!     fn priority(&self) -> i32 { 50 }
+//!     
+//!     async fn execute(&self, ctx: &ExecutionContext) -> Result<ToolOutput> {
+//!         // Your tool logic here
+//!         Ok(ToolOutput::success("Done!"))
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let mut orchestrator = Orchestrator::new(".")?;
+//!     orchestrator.register_tool(Box::new(MyDxTool));
+//!     orchestrator.execute_all().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Quick Start - Change Detection
+//!
+//! ```rust,no_run
+//! use dx_forge::{DualWatcher, FileChange};
+//! use tokio::sync::broadcast;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let watcher = ForgeWatcher::new(".", |event| {
-//!         match event {
-//!             ForgeEvent::Rapid { path, time_us } => {
-//!                 println!("⚡ File changed: {} ({}µs)", path, time_us);
-//!             }
-//!             ForgeEvent::Quality { path, operations, time_us, .. } => {
-//!                 println!("📊 {} operations in {} ({}µs)", operations.len(), path, time_us);
-//!             }
-//!         }
-//!     }).await?;
+//!     let watcher = DualWatcher::new(".")?;
+//!     let mut rx = watcher.subscribe();
 //!     
-//!     watcher.run().await?;
+//!     tokio::spawn(async move {
+//!         watcher.start().await
+//!     });
+//!     
+//!     while let Ok(change) = rx.recv().await {
+//!         println!("Change detected: {:?} ({})", change.path, change.source);
+//!     }
 //!     Ok(())
 //! }
 //! ```
 
+// Core modules
 pub mod context;
 pub mod crdt;
 pub mod server;
 pub mod storage;
 pub mod sync;
+
+// Legacy watcher module (for CLI compatibility)
+#[path = "watcher_legacy/mod.rs"]
+pub mod watcher_legacy;
+
+// Production orchestration modules (v1.0.0)
+pub mod orchestrator;
 pub mod watcher;
 
-// Re-export main types for library consumers
+// Re-export orchestration types (public API)
+pub use orchestrator::{
+    Orchestrator, 
+    DxTool, 
+    ExecutionContext, 
+    ToolOutput, 
+    ToolManifest,
+    TrafficBranch,
+    TrafficAnalyzer,
+};
+
+pub use watcher::{
+    DualWatcher, 
+    LspWatcher, 
+    FileWatcher, 
+    FileChange,
+    ChangeKind,
+    ChangeSource,
+};
+
+// Re-export storage types
 pub use crdt::{Operation, OperationType, Position};
-pub use watcher::{ForgeEvent, ForgeWatcher, RapidChange, QualityChange};
 pub use storage::{Database, OperationLog};
-pub use context::{ComponentStateManager, TrafficBranch, UpdateResult};
+pub use context::{ComponentStateManager, UpdateResult};
+
+// Legacy exports (deprecated in favor of new watcher module)
+#[deprecated(since = "1.0.0", note = "use `watcher::DualWatcher` instead")]
+pub use watcher::DualWatcher as ForgeWatcher;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
