@@ -1,6 +1,7 @@
-Now, here is the biggest task - you have to create it production ready and following all pro standards:
+# Now, here is the biggest task - you have to create it production ready and following all pro standards:
 
 So, as you know forge is just not VCS - it also controls the dx-tools version alonside decides what tools to runs in what order of dx-tools - So, you have to make this forge put a forge rust crate that I will publish on crates and will later use it in other dx-tools - dx has so many tools - some of the closes upcoming packages are:
+
 1. style - css generator from classnames but 100 times faster than tailwindcss that is build using oxide and rust
 2. internationalization - can generate locales for 256 languages for free unlimited and also can generate tts for 256 languages free and unlimited - just editing the main locales/en.json file
 3. ui - can add any components from dx-r2 storage - thing like them as shadcn component but more professional component + more better design and more components!!! so in any js, jsx, ts, tsx file when you write "dx followed by a component name from dx-ui it dx will remove that text and put a import line at the top of the time and then adds the components in the right path - plus you get intellicense in code editors or just go the website and copy that less than one line code if you want or just from the website there's a feature called cart where you select more component in just one copy - this is where our branching has to truly shine with green, red, yellow brancing!!! But they should added for all tools
