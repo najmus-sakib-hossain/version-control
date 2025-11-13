@@ -882,6 +882,7 @@ async fn main() -> Result<()> {
 ## Best Practices
 
 ### 1. Tool Priority Guidelines
+
 - **100+**: Preprocessing (dx-style, dx-fonts)
 - **80-99**: Core logic (dx-ui, dx-icons)
 - **50-79**: Secondary features (dx-i18n, dx-auth)
@@ -889,24 +890,28 @@ async fn main() -> Result<()> {
 - **0-9**: Cleanup and reporting
 
 ### 2. Error Handling
+
 - Always use `Result<T>` return types
 - Implement proper error hooks for cleanup
 - Use retry logic for network operations
 - Provide helpful error messages
 
 ### 3. Performance
+
 - Cache frequently accessed data
 - Use pattern detection efficiently
 - Batch file operations
 - Implement proper cleanup (LRU eviction)
 
 ### 4. Versioning
+
 - Follow semantic versioning
 - Declare dependencies explicitly
 - Check version compatibility
 - Handle breaking changes gracefully
 
 ### 5. Testing
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -925,9 +930,9 @@ mod tests {
 
 ## Support
 
-- **Documentation**: https://docs.rs/dx-forge
-- **Repository**: https://github.com/najmus-sakib-hossain/forge
-- **Issues**: https://github.com/najmus-sakib-hossain/forge/issues
+- **Documentation**: <https://docs.rs/dx-forge>
+- **Repository**: <https://github.com/najmus-sakib-hossain/forge>
+- **Issues**: <https://github.com/najmus-sakib-hossain/forge/issues>
 
 ---
 
