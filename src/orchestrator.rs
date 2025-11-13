@@ -34,6 +34,9 @@ pub struct ExecutionContext {
 
     /// Traffic branch analyzer
     pub traffic_analyzer: Arc<dyn TrafficAnalyzer + Send + Sync>,
+
+    /// Component state manager for traffic branch system
+    pub component_manager: Option<Arc<RwLock<crate::context::ComponentStateManager>>>,
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -51,6 +54,11 @@ impl std::fmt::Debug for ExecutionContext {
 impl ExecutionContext {
     /// Create a new execution context
     pub fn new(repo_root: PathBuf, forge_path: PathBuf) -> Self {
+        // Try to create component state manager
+        let component_manager = crate::context::ComponentStateManager::new(&forge_path)
+            .ok()
+            .map(|mgr| Arc::new(RwLock::new(mgr)));
+
         Self {
             repo_root,
             forge_path,
@@ -58,6 +66,7 @@ impl ExecutionContext {
             changed_files: Vec::new(),
             shared_state: Arc::new(RwLock::new(HashMap::new())),
             traffic_analyzer: Arc::new(DefaultTrafficAnalyzer),
+            component_manager,
         }
     }
 
@@ -154,6 +163,26 @@ pub trait DxTool: Send + Sync {
     fn dependencies(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// Before execution hook (setup, validation)
+    fn before_execute(&mut self, _context: &ExecutionContext) -> Result<()> {
+        Ok(())
+    }
+
+    /// After execution hook (cleanup, reporting)
+    fn after_execute(&mut self, _context: &ExecutionContext, _output: &ToolOutput) -> Result<()> {
+        Ok(())
+    }
+
+    /// On error hook (rollback, cleanup)
+    fn on_error(&mut self, _context: &ExecutionContext, _error: &anyhow::Error) -> Result<()> {
+        Ok(())
+    }
+
+    /// Execution timeout in seconds (0 = no timeout)
+    fn timeout_seconds(&self) -> u64 {
+        60
+    }
 }
 
 // Tools are self-contained - no manifests needed
@@ -199,10 +228,38 @@ impl TrafficAnalyzer for DefaultTrafficAnalyzer {
     }
 }
 
+/// Orchestration configuration
+#[derive(Debug, Clone)]
+pub struct OrchestratorConfig {
+    /// Enable parallel execution
+    pub parallel: bool,
+
+    /// Fail fast on first error
+    pub fail_fast: bool,
+
+    /// Maximum concurrent tools (for parallel mode)
+    pub max_concurrent: usize,
+
+    /// Enable traffic branch safety checks
+    pub traffic_branch_enabled: bool,
+}
+
+impl Default for OrchestratorConfig {
+    fn default() -> Self {
+        Self {
+            parallel: false,
+            fail_fast: true,
+            max_concurrent: 4,
+            traffic_branch_enabled: true,
+        }
+    }
+}
+
 /// Simple orchestrator - just coordinates tool execution timing
 pub struct Orchestrator {
     tools: Vec<Box<dyn DxTool>>,
     context: ExecutionContext,
+    config: OrchestratorConfig,
 }
 
 impl Orchestrator {
@@ -214,7 +271,25 @@ impl Orchestrator {
         Ok(Self {
             tools: Vec::new(),
             context: ExecutionContext::new(repo_root, forge_path),
+            config: OrchestratorConfig::default(),
         })
+    }
+
+    /// Create orchestrator with custom configuration
+    pub fn with_config(repo_root: impl Into<PathBuf>, config: OrchestratorConfig) -> Result<Self> {
+        let repo_root = repo_root.into();
+        let forge_path = repo_root.join(".dx/forge");
+
+        Ok(Self {
+            tools: Vec::new(),
+            context: ExecutionContext::new(repo_root, forge_path),
+            config,
+        })
+    }
+
+    /// Update configuration
+    pub fn set_config(&mut self, config: OrchestratorConfig) {
+        self.config = config;
     }
 
     /// Register a tool (tools configure themselves)
@@ -238,35 +313,127 @@ impl Orchestrator {
         // Check dependencies
         self.validate_dependencies()?;
 
-        // Execute each tool
+        // Check for circular dependencies
+        self.check_circular_dependencies()?;
+
+        // Execute tools
         let mut outputs = Vec::new();
+        let context = self.context.clone();
 
         for tool in &mut self.tools {
-            if !tool.should_run(&self.context) {
+            if !tool.should_run(&context) {
                 println!("⏭️  Skipping {}: pre-check failed", tool.name());
                 continue;
             }
 
             println!(
-                "🚀 Executing: {} (priority: {})",
+                "🚀 Executing: {} v{} (priority: {})",
                 tool.name(),
+                tool.version(),
                 tool.priority()
             );
 
-            let start = std::time::Instant::now();
-            let mut output = tool.execute(&self.context)?;
-            output.duration_ms = start.elapsed().as_millis() as u64;
-
-            if output.success {
-                println!("✅ {} completed in {}ms", tool.name(), output.duration_ms);
-            } else {
-                println!("❌ {} failed: {}", tool.name(), output.message);
+            // Execute with lifecycle hooks
+            match Self::execute_tool_with_hooks(tool, &context) {
+                Ok(output) => {
+                    if output.success {
+                        println!("✅ {} completed in {}ms", tool.name(), output.duration_ms);
+                    } else {
+                        println!("❌ {} failed: {}", tool.name(), output.message);
+                        
+                        if self.config.fail_fast {
+                            return Err(anyhow::anyhow!("Tool {} failed: {}", tool.name(), output.message));
+                        }
+                    }
+                    outputs.push(output);
+                }
+                Err(e) => {
+                    println!("💥 {} error: {}", tool.name(), e);
+                    
+                    if self.config.fail_fast {
+                        return Err(e);
+                    }
+                    
+                    outputs.push(ToolOutput::failure(format!("Error: {}", e)));
+                }
             }
-
-            outputs.push(output);
         }
 
         Ok(outputs)
+    }
+
+    /// Execute tool with lifecycle hooks and error handling
+    fn execute_tool_with_hooks(tool: &mut Box<dyn DxTool>, context: &ExecutionContext) -> Result<ToolOutput> {
+        let start = std::time::Instant::now();
+
+        // Before hook
+        tool.before_execute(context)?;
+
+        // Execute with timeout
+        let result = if tool.timeout_seconds() > 0 {
+            // For now, execute directly (timeout would require tokio runtime)
+            tool.execute(context)
+        } else {
+            tool.execute(context)
+        };
+
+        // Handle result
+        match result {
+            Ok(mut output) => {
+                output.duration_ms = start.elapsed().as_millis() as u64;
+                
+                // After hook
+                tool.after_execute(context, &output)?;
+                
+                Ok(output)
+            }
+            Err(e) => {
+                // Error hook
+                tool.on_error(context, &e)?;
+                Err(e)
+            }
+        }
+    }
+
+    /// Check for circular dependencies
+    fn check_circular_dependencies(&self) -> Result<()> {
+        let mut visited = HashSet::new();
+        let mut stack = HashSet::new();
+
+        for tool in &self.tools {
+            if !visited.contains(tool.name()) {
+                self.check_circular_deps_recursive(tool.name(), &mut visited, &mut stack)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_circular_deps_recursive(
+        &self,
+        tool_name: &str,
+        visited: &mut HashSet<String>,
+        stack: &mut HashSet<String>,
+    ) -> Result<()> {
+        visited.insert(tool_name.to_string());
+        stack.insert(tool_name.to_string());
+
+        if let Some(tool) = self.tools.iter().find(|t| t.name() == tool_name) {
+            for dep in tool.dependencies() {
+                if !visited.contains(&dep) {
+                    self.check_circular_deps_recursive(&dep, visited, stack)?;
+                } else if stack.contains(&dep) {
+                    return Err(anyhow::anyhow!(
+                        "Circular dependency detected: {} -> {}",
+                        tool_name,
+                        dep
+                    ));
+                }
+            }
+        }
+
+        stack.remove(tool_name);
+        Ok(())
     }
 
     /// Validate tool dependencies

@@ -67,6 +67,7 @@ toml = "0.8"
 ropey = "1.6.1"
 similar = { version = "2.7.0", features = ["inline"] }
 memchr = "2.7"
+regex = "1.11"
 
 # HTTP client for initial sync fetches
 reqwest = { version = "0.12.8", default-features = false, features = [

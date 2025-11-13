@@ -729,7 +729,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dx-forge"
-version = "1.0.0"
+version = "0.0.1"
 dependencies = [
  "ahash",
  "anyhow",
@@ -760,6 +760,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "rayon",
+ "regex",
  "reqwest",
  "ropey",
  "rusqlite",

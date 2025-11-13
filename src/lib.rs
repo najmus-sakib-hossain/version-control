@@ -6,6 +6,10 @@
 //! - Dual-watcher architecture (LSP + File System monitoring)
 //! - Tool orchestration with priority-based execution and dependency resolution
 //! - Component injection for zero-bloat dependency management
+//! - Semantic versioning with dependency resolution
+//! - Pattern detection for dx-tools (dxButton, dxiIcon, dxfRoboto, etc.)
+//! - R2 component caching and injection
+//! - Production error handling with retry logic
 //!
 //! ## Architecture Overview
 //!
@@ -15,10 +19,13 @@
 //!
 //! ### Core Components
 //!
-//! - **Orchestrator**: Coordinates tool execution with dependency resolution
-//! - **Dual-Watcher**: Monitors LSP + file system changes in real-time
-//! - **Traffic Branch System**: Green (auto), Yellow (merge), Red (manual)
+//! - **Orchestrator**: Coordinates tool execution with lifecycle hooks, circular dependency detection
+//! - **Dual-Watcher**: Monitors LSP + file system changes with pattern detection
+//! - **Traffic Branch System**: Green (auto), Yellow (merge), Red (manual) for safe updates
 //! - **Storage Layer**: Content-addressable blobs with R2 cloud sync
+//! - **Version Manager**: Semantic versioning with compatibility checking
+//! - **Pattern Detector**: Identifies dx-tool patterns in source code
+//! - **Injection Manager**: Fetches and caches components from R2 storage
 //!
 //! ## Quick Start - Tool Development
 //!
@@ -87,9 +94,16 @@ pub mod watcher_legacy;
 pub mod orchestrator;
 pub mod watcher;
 
+// DX Tools support modules
+pub mod version;
+pub mod patterns;
+pub mod injection;
+pub mod error;
+
 // Re-export orchestration types (public API)
 pub use orchestrator::{
-    Conflict, DxTool, ExecutionContext, Orchestrator, ToolOutput, TrafficAnalyzer, TrafficBranch,
+    Conflict, DxTool, ExecutionContext, Orchestrator, OrchestratorConfig, ToolOutput,
+    TrafficAnalyzer, TrafficBranch,
 };
 
 pub use watcher::{ChangeKind, ChangeSource, DualWatcher, FileChange, FileWatcher, LspWatcher};
@@ -98,6 +112,12 @@ pub use watcher::{ChangeKind, ChangeSource, DualWatcher, FileChange, FileWatcher
 pub use context::{ComponentStateManager, UpdateResult};
 pub use crdt::{Operation, OperationType, Position};
 pub use storage::{Database, OperationLog};
+
+// Re-export DX tools support types
+pub use version::{ToolInfo, ToolRegistry, ToolSource, Version, VersionReq};
+pub use patterns::{DxToolType, PatternDetector, PatternMatch};
+pub use injection::{CacheStats, ComponentMetadata, InjectionManager};
+pub use error::{categorize_error, EnhancedError, EnhancedResult, ErrorCategory, RetryPolicy, ToEnhanced, with_retry};
 
 // Legacy exports (deprecated in favor of new watcher module)
 #[deprecated(since = "1.0.0", note = "use `watcher::DualWatcher` instead")]

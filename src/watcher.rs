@@ -35,6 +35,9 @@ pub struct FileChange {
 
     /// Optional content if available from LSP
     pub content: Option<String>,
+
+    /// Detected DX patterns (if analyzed)
+    pub patterns: Option<Vec<crate::patterns::PatternMatch>>,
 }
 
 /// Type of file change
@@ -112,12 +115,20 @@ impl LspWatcher {
     fn process_lsp_event(&self, event: LspEvent) -> Result<()> {
         let path = PathBuf::from(event.uri.trim_start_matches("file://"));
 
+        // Detect patterns in content
+        let patterns = if let Ok(detector) = crate::patterns::PatternDetector::new() {
+            detector.detect_in_file(&path, &event.content).ok()
+        } else {
+            None
+        };
+
         let change = FileChange {
             path,
             kind: ChangeKind::Modified,
             source: ChangeSource::Lsp,
             timestamp: std::time::SystemTime::now(),
             content: Some(event.content),
+            patterns,
         };
 
         let _ = self.change_tx.send(change);
@@ -209,6 +220,7 @@ impl FileWatcher {
             source: ChangeSource::FileSystem,
             timestamp: std::time::SystemTime::now(),
             content: None,
+            patterns: None,
         })
     }
 }
@@ -284,6 +296,25 @@ impl DualWatcher {
             .recv()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to receive change: {}", e))
+    }
+
+    /// Analyze file changes for DX patterns
+    pub async fn analyze_patterns(&self, mut change: FileChange) -> Result<FileChange> {
+        // If content is available and patterns not yet detected
+        if change.patterns.is_none() {
+            if let Some(content) = &change.content {
+                let detector = crate::patterns::PatternDetector::new()?;
+                change.patterns = detector.detect_in_file(&change.path, content).ok();
+            } else if change.path.exists() {
+                // Read file if it exists
+                if let Ok(content) = tokio::fs::read_to_string(&change.path).await {
+                    let detector = crate::patterns::PatternDetector::new()?;
+                    change.patterns = detector.detect_in_file(&change.path, &content).ok();
+                }
+            }
+        }
+
+        Ok(change)
     }
 }
 
