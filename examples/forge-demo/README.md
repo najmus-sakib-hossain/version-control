@@ -36,6 +36,7 @@ forge stats
 ## Storage Backend
 
 All blobs are stored in Cloudflare R2 with:
+
 - LZ4 compression (10-50x faster than gzip)
 - SHA-256 content addressing
 - Zero egress fees

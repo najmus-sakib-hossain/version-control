@@ -1,4 +1,4 @@
-# Now, here is the biggest task - you have to create it production ready and following all pro standards:
+# Now, here is the biggest task - you have to create it production ready and following all pro standards -
 
 So, as you know forge is just not VCS - it also controls the dx-tools version alonside decides what tools to runs in what order of dx-tools - So, you have to make this forge put a forge rust crate that I will publish on crates and will later use it in other dx-tools - dx has so many tools - some of the closes upcoming packages are:
 
