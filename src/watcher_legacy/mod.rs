@@ -143,12 +143,12 @@ impl ForgeWatcher {
             )
             .await
         } else {
-            // Fall back to file system watching
-            println!(
-                "{} {} mode (no LSP extension detected)",
-                "👁️".bright_yellow(),
-                "File watching".bright_cyan().bold()
-            );
+                // Fall back to file system watching
+                tracing::info!(
+                    "{} {} mode (no LSP extension detected)",
+                    "👁️".bright_yellow(),
+                    "File watching".bright_cyan().bold()
+                );
             detector::start_watching(
                 self.repo_root,
                 self.oplog,

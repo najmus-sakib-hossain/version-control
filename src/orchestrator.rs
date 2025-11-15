@@ -295,7 +295,7 @@ impl Orchestrator {
     /// Register a tool (tools configure themselves)
     pub fn register_tool(&mut self, tool: Box<dyn DxTool>) -> Result<()> {
         let name = tool.name().to_string();
-        println!(
+        tracing::info!(
             "📦 Registered tool: {} v{} (priority: {})",
             name,
             tool.version(),
@@ -322,11 +322,11 @@ impl Orchestrator {
 
         for tool in &mut self.tools {
             if !tool.should_run(&context) {
-                println!("⏭️  Skipping {}: pre-check failed", tool.name());
+                tracing::info!("⏭️  Skipping {}: pre-check failed", tool.name());
                 continue;
             }
 
-            println!(
+            tracing::info!(
                 "🚀 Executing: {} v{} (priority: {})",
                 tool.name(),
                 tool.version(),
@@ -337,9 +337,9 @@ impl Orchestrator {
             match Self::execute_tool_with_hooks(tool, &context) {
                 Ok(output) => {
                     if output.success {
-                        println!("✅ {} completed in {}ms", tool.name(), output.duration_ms);
+                        tracing::info!("✅ {} completed in {}ms", tool.name(), output.duration_ms);
                     } else {
-                        println!("❌ {} failed: {}", tool.name(), output.message);
+                        tracing::error!("❌ {} failed: {}", tool.name(), output.message);
                         
                         if self.config.fail_fast {
                             return Err(anyhow::anyhow!("Tool {} failed: {}", tool.name(), output.message));
@@ -348,7 +348,7 @@ impl Orchestrator {
                     outputs.push(output);
                 }
                 Err(e) => {
-                    println!("💥 {} error: {}", tool.name(), e);
+                    tracing::error!("💥 {} error: {}", tool.name(), e);
                     
                     if self.config.fail_fast {
                         return Err(e);

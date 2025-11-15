@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use crate::crdt::{Operation, OperationType, Position};
+use tracing::{info, warn, error, debug};
 use crate::storage::OperationLog;
 use crate::sync::{SyncManager, GLOBAL_CLOCK};
 use crate::watcher_legacy::cache_warmer;
@@ -132,7 +133,7 @@ fn detect_quality_operations(
         let total_time = start.elapsed().as_micros();
 
         if !report.ops.is_empty() {
-            println!(
+            info!(
                 "⚙️ [QUALITY ONLY {}µs] {} - {} ops",
                 total_time,
                 path_to_string(path).bright_green(),
@@ -158,7 +159,7 @@ fn detect_quality_operations(
         } else {
             "🐌"
         };
-        println!(
+        info!(
             "{} [RAPID {}µs] {} changed",
             rapid_marker,
             rapid_time_us,
@@ -171,7 +172,7 @@ fn detect_quality_operations(
         } else {
             "🐢"
         };
-        println!(
+        info!(
             "{} [QUALITY {}µs | total {}µs]",
             quality_marker, quality_time, total_time,
         );
@@ -352,7 +353,7 @@ async fn process_events_loop(
             }
             Err(errors) => {
                 for error in errors {
-                    println!("{} Debouncer error: {}", "⚠️".bright_red(), error);
+                    error!("{} Debouncer error: {}", "⚠️".bright_red(), error);
                 }
             }
         }
@@ -420,7 +421,7 @@ fn record_throughput(micros: u128) {
             let elapsed = guard.elapsed();
             if elapsed >= Duration::from_secs(1) {
                 let ops_per_sec = 100.0 / elapsed.as_secs_f64().max(f64::EPSILON);
-                println!(
+                info!(
                     "{} Processed {} ops in {:.2}s (~{:.1} ops/s, last op {}µs)",
                     "📈".bright_blue(),
                     total,
@@ -837,7 +838,7 @@ fn profile_detect(path: &Path, timings: &DetectionTimings, has_ops: bool) {
     // When profiling is enabled, show all logs
     // When profiling is disabled, only show if operations were created
     if PROFILE_DETECT || has_ops {
-        println!(
+        info!(
             "⚙️ detect {} | total={}µs",
             path.display(),
             timings.total_us
@@ -1235,7 +1236,7 @@ fn print_operation(op: &Operation, total_us: u128, detect_us: u128, _queue_us: u
         }
     };
 
-    println!(
+    info!(
         "{} {} {} {}",
         perf_indicator,
         time_colored,
@@ -1272,7 +1273,7 @@ fn print_operation_diff(ops: &[Operation]) {
                 content,
                 length: _,
             } => {
-                println!(
+                info!(
                     "  {} {} @ {}:{}",
                     "+".green().bold(),
                     filename.bright_cyan(),
@@ -1281,15 +1282,15 @@ fn print_operation_diff(ops: &[Operation]) {
                 );
                 // Show ALL inserted lines (not truncated)
                 for line in content.lines() {
-                    println!("    {}", line.green());
+                    info!("    {}", line.green());
                 }
                 if content.lines().count() == 0 && !content.is_empty() {
                     // Single line without newline
-                    println!("    {}", content.green());
+                    info!("    {}", content.green());
                 }
             }
             OperationType::Delete { position, length } => {
-                println!(
+                info!(
                     "  {} {} @ {}:{} ({} chars)",
                     "-".red().bold(),
                     filename.bright_cyan(),
@@ -1303,7 +1304,7 @@ fn print_operation_diff(ops: &[Operation]) {
                 old_content,
                 new_content,
             } => {
-                println!(
+                info!(
                     "  {} {} @ {}:{}",
                     "~".yellow().bold(),
                     filename.bright_cyan(),
@@ -1312,20 +1313,20 @@ fn print_operation_diff(ops: &[Operation]) {
                 );
                 // Show ALL lines for both old and new content
                 for line in old_content.lines() {
-                    println!("    {} {}", "-".red(), line.red());
+                    info!("    {} {}", "-".red(), line.red());
                 }
                 if old_content.lines().count() == 0 && !old_content.is_empty() {
-                    println!("    {} {}", "-".red(), old_content.red());
+                    info!("    {} {}", "-".red(), old_content.red());
                 }
                 for line in new_content.lines() {
-                    println!("    {} {}", "+".green(), line.green());
+                    info!("    {} {}", "+".green(), line.green());
                 }
                 if new_content.lines().count() == 0 && !new_content.is_empty() {
-                    println!("    {} {}", "+".green(), new_content.green());
+                    info!("    {} {}", "+".green(), new_content.green());
                 }
             }
             OperationType::FileCreate { content } => {
-                println!(
+                info!(
                     "  {} {} ({} lines)",
                     "✨".bright_green(),
                     filename.bright_cyan(),
@@ -1333,10 +1334,10 @@ fn print_operation_diff(ops: &[Operation]) {
                 );
                 // Show first 10 lines of new file
                 for line in content.lines().take(10) {
-                    println!("    {}", line.bright_black());
+                    info!("    {}", line.bright_black());
                 }
                 if content.lines().count() > 10 {
-                    println!(
+                    info!(
                         "    {} {} more lines",
                         "...".bright_black(),
                         content.lines().count() - 10
@@ -1344,7 +1345,7 @@ fn print_operation_diff(ops: &[Operation]) {
                 }
             }
             OperationType::FileDelete => {
-                println!("  {} {}", "🗑️ ".bright_red(), filename.bright_cyan());
+                info!("  {} {}", "🗑️ ".bright_red(), filename.bright_cyan());
             }
             OperationType::FileRename { old_path, new_path } => {
                 let old_name = std::path::Path::new(old_path)
@@ -1355,7 +1356,7 @@ fn print_operation_diff(ops: &[Operation]) {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(new_path);
-                println!(
+                info!(
                     "  {} {} → {}",
                     "📋".bright_yellow(),
                     old_name.yellow(),

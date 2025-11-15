@@ -2,6 +2,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
 use dx_forge::{context, server, storage, watcher_legacy};
+use tracing::{info, warn, error};
+use tracing_subscriber::{EnvFilter};
+use tracing_subscriber::prelude::*;
+use tracing_appender::rolling;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -180,6 +184,35 @@ enum Commands {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<()> {
+    // Initialize structured logging to logs/forge.log and stdout
+    let log_dir = std::env::current_dir()?.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = rolling::never(&log_dir, "forge.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_target(false);
+
+    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
+
+    let env_filter = match EnvFilter::try_from_default_env() {
+        Ok(f) => f,
+        Err(_) => EnvFilter::new("info"),
+    };
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(file_layer)
+        .with(stdout_layer)
+        .init();
+
+    // keep the guard alive for the lifetime of the program
+    let _guard = guard;
+
+    info!("Logging initialized: {}", log_dir.join("forge.log").display());
+
     let cli = Cli::parse();
 
     let command = match cli.command {

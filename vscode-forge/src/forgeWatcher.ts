@@ -6,6 +6,9 @@ export class ForgeWatcher {
     private fileWatchers: vscode.Disposable[] = [];
     private forgeProcess: child_process.ChildProcess | undefined;
     private changeQueue: Map<string, NodeJS.Timeout> = new Map();
+    private logFileWatcher: vscode.FileSystemWatcher | undefined;
+    private logFilePosition: number = 0;
+    private isForgeRunning: boolean = false;
 
     constructor(
         private rootPath: string,
@@ -17,8 +20,14 @@ export class ForgeWatcher {
         try {
             this.log('info', '👁️  Starting file system watcher...');
             
+            // Start Forge binary in background
+            await this.startForgeProcess();
+
             // Watch workspace files
             this.startFileWatching();
+
+            // Watch forge.log file
+            await this.startLogFileWatching();
 
             this.log('success', '✅ Forge LSP watcher active');
             this.outputChannel.appendLine('');
@@ -29,6 +38,102 @@ export class ForgeWatcher {
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             this.log('error', `Failed to start watcher: ${errorMsg}`);
+            throw error;
+        }
+    }
+
+    private async startForgeProcess() {
+        if (this.isForgeRunning) {
+            this.log('warning', '⚠️  Forge process already running');
+            return;
+        }
+
+        this.outputChannel.appendLine('');
+        this.log('info', '🚀 Starting Forge binary...');
+        this.log('info', `   Binary: ${this.forgeBinary}`);
+        this.log('info', `   Working Dir: ${this.rootPath}`);
+        this.outputChannel.appendLine('');
+
+        try {
+            // Spawn the forge watch command
+            this.forgeProcess = child_process.spawn(this.forgeBinary, ['watch'], {
+                cwd: this.rootPath,
+                shell: true,
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+
+            this.isForgeRunning = true;
+
+            // Handle stdout
+            if (this.forgeProcess.stdout) {
+                this.forgeProcess.stdout.on('data', (data: Buffer) => {
+                    const output = data.toString().trim();
+                    if (output) {
+                        this.outputChannel.appendLine('');
+                        this.outputChannel.appendLine('🔵 Forge Output:');
+                        this.outputChannel.appendLine('─'.repeat(80));
+                        output.split('\n').forEach(line => {
+                            // Strip ANSI codes
+                            const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '');
+                            if (cleanLine.trim()) {
+                                this.outputChannel.appendLine(`   ${cleanLine}`);
+                            }
+                        });
+                        this.outputChannel.appendLine('─'.repeat(80));
+                    }
+                });
+            }
+
+            // Handle stderr
+            if (this.forgeProcess.stderr) {
+                this.forgeProcess.stderr.on('data', (data: Buffer) => {
+                    const error = data.toString().trim();
+                    if (error) {
+                        this.outputChannel.appendLine('');
+                        this.outputChannel.appendLine('🔴 Forge Error:');
+                        this.outputChannel.appendLine('─'.repeat(80));
+                        error.split('\n').forEach(line => {
+                            const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '');
+                            if (cleanLine.trim()) {
+                                this.outputChannel.appendLine(`   ${cleanLine}`);
+                            }
+                        });
+                        this.outputChannel.appendLine('─'.repeat(80));
+                    }
+                });
+            }
+
+            // Handle process exit
+            this.forgeProcess.on('exit', (code, signal) => {
+                this.isForgeRunning = false;
+                this.outputChannel.appendLine('');
+                if (code === 0) {
+                    this.log('info', '✅ Forge process exited normally');
+                } else {
+                    this.log('error', `❌ Forge process exited with code ${code} (signal: ${signal})`);
+                }
+                this.logDivider();
+            });
+
+            // Handle errors
+            this.forgeProcess.on('error', (error: Error) => {
+                this.isForgeRunning = false;
+                this.log('error', `❌ Failed to start Forge: ${error.message}`);
+            });
+
+            // Give it a moment to start
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            if (this.isForgeRunning) {
+                this.log('success', '✅ Forge binary started successfully');
+                this.log('info', `   Process PID: ${this.forgeProcess.pid}`);
+                this.logDivider();
+            }
+
+        } catch (error) {
+            this.isForgeRunning = false;
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            this.log('error', `❌ Failed to start Forge: ${errorMsg}`);
             throw error;
         }
     }
@@ -46,6 +151,100 @@ export class ForgeWatcher {
         this.fileWatchers.push(fileWatcher.onDidChange((uri: vscode.Uri) => this.handleFileChange(uri, 'MODIFIED')));
         this.fileWatchers.push(fileWatcher.onDidCreate((uri: vscode.Uri) => this.handleFileChange(uri, 'CREATED')));
         this.fileWatchers.push(fileWatcher.onDidDelete((uri: vscode.Uri) => this.handleFileChange(uri, 'DELETED')));
+    }
+
+    private async startLogFileWatching() {
+        const fs = require('fs');
+        const logFilePath = path.join(this.rootPath, 'logs', 'forge.log');
+
+        // Check if log file exists
+        if (!fs.existsSync(logFilePath)) {
+            this.log('info', '📋 Waiting for forge.log to be created...');
+            return;
+        }
+
+        // Get initial file size
+        try {
+            const stats = fs.statSync(logFilePath);
+            this.logFilePosition = stats.size;
+        } catch (error) {
+            this.logFilePosition = 0;
+        }
+
+        // Create file watcher for forge.log
+        const logPattern = new vscode.RelativePattern(
+            this.rootPath,
+            'logs/forge.log'
+        );
+
+        this.logFileWatcher = vscode.workspace.createFileSystemWatcher(logPattern);
+        
+        this.fileWatchers.push(this.logFileWatcher);
+        this.fileWatchers.push(
+            this.logFileWatcher.onDidChange(() => this.handleLogFileChange(logFilePath))
+        );
+        this.fileWatchers.push(
+            this.logFileWatcher.onDidCreate(() => this.handleLogFileCreated(logFilePath))
+        );
+
+        this.log('info', '📋 Watching forge.log for Forge binary output');
+        this.logDivider();
+
+        // Read any existing content
+        await this.handleLogFileChange(logFilePath);
+    }
+
+    private async handleLogFileCreated(logFilePath: string) {
+        this.logFilePosition = 0;
+        this.outputChannel.appendLine('');
+        this.outputChannel.appendLine('📋 forge.log created');
+        this.logDivider();
+        await this.handleLogFileChange(logFilePath);
+    }
+
+    private async handleLogFileChange(logFilePath: string) {
+        const fs = require('fs');
+
+        try {
+            const stats = fs.statSync(logFilePath);
+            const fileSize = stats.size;
+
+            // Only read new content
+            if (fileSize > this.logFilePosition) {
+                const stream = fs.createReadStream(logFilePath, {
+                    start: this.logFilePosition,
+                    end: fileSize
+                });
+
+                let newContent = '';
+                for await (const chunk of stream) {
+                    newContent += chunk.toString();
+                }
+
+                // Update position
+                this.logFilePosition = fileSize;
+
+                // Display new log entries
+                if (newContent.trim()) {
+                    this.outputChannel.appendLine('');
+                    this.outputChannel.appendLine('📋 Forge Binary Log:');
+                    this.outputChannel.appendLine('─'.repeat(80));
+                    
+                    // Strip ANSI escape codes for cleaner output
+                    const cleanContent = newContent.replace(/\x1b\[[0-9;]*m/g, '');
+                    
+                    cleanContent.split('\n').forEach(line => {
+                        if (line.trim()) {
+                            this.outputChannel.appendLine(`   ${line}`);
+                        }
+                    });
+                    
+                    this.outputChannel.appendLine('─'.repeat(80));
+                }
+            }
+        } catch (error) {
+            // File might not exist yet or be locked
+        }
     }
 
     private async handleFileChange(uri: vscode.Uri, changeType: string) {
@@ -338,9 +537,17 @@ export class ForgeWatcher {
         this.changeQueue.clear();
 
         // Stop forge process if running
-        if (this.forgeProcess) {
-            this.forgeProcess.kill();
+        if (this.forgeProcess && this.isForgeRunning) {
+            this.log('info', '⏹️  Stopping Forge binary...');
+            this.forgeProcess.kill('SIGTERM');
             this.forgeProcess = undefined;
+            this.isForgeRunning = false;
+        }
+
+        // Dispose log file watcher
+        if (this.logFileWatcher) {
+            this.logFileWatcher.dispose();
+            this.logFileWatcher = undefined;
         }
 
         // Dispose all file watchers

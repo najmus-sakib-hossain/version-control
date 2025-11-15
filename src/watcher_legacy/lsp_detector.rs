@@ -17,6 +17,7 @@ use tokio::sync::RwLock;
 use crate::crdt::{Operation, OperationType, Position};
 use crate::storage::OperationLog;
 use crate::sync::{SyncManager, GLOBAL_CLOCK};
+use tracing::{info, error};
 
 /// LSP text document change event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,7 +239,7 @@ impl LspDetector {
             _ => return,
         };
 
-        println!(
+        info!(
             "{} {} {} {}",
             "📡".bright_blue(),
             "[LSP]".bright_blue().bold(),
@@ -277,7 +278,7 @@ pub async fn detect_lsp_support() -> Result<bool> {
                 for entry in entries.flatten() {
                     if let Some(name) = entry.file_name().to_str() {
                         if name.starts_with("dx-") || name.contains("forge") {
-                            println!(
+                            info!(
                                 "{} {} detected",
                                 "✓".bright_green(),
                                 "DX editor extension".bright_cyan()
@@ -300,7 +301,7 @@ pub async fn start_lsp_monitoring(
     actor_id: String,
     sync_mgr: Option<Arc<SyncManager>>,
 ) -> Result<()> {
-    println!(
+    info!(
         "{} {} mode enabled",
         "📡".bright_blue(),
         "LSP-based detection".bright_cyan().bold()
@@ -316,7 +317,7 @@ pub async fn start_lsp_monitoring(
     // For now, simulate by watching a message queue
     let lsp_queue = repo_root.join(".dx/forge/lsp_queue.json");
 
-    println!("{} Listening for LSP events...", "→".bright_black());
+    info!("{} Listening for LSP events...", "→".bright_black());
 
     // Monitor queue file for events (simplified)
     loop {
@@ -326,7 +327,7 @@ pub async fn start_lsp_monitoring(
             if let Ok(content) = tokio::fs::read_to_string(&lsp_queue).await {
                 if let Ok(event) = serde_json::from_str::<LspChangeEvent>(&content) {
                     if let Err(e) = detector.process_change(event).await {
-                        eprintln!("Error processing LSP event: {}", e);
+                        error!("Error processing LSP event: {}", e);
                     }
 
                     // Clear queue file

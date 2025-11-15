@@ -1,0 +1,5 @@
+2025-11-15T16:03:04.478742Z  INFO Logging initialized: F:\Code\forge\logs\forge.log
+2025-11-15T16:03:32.953604Z  INFO Logging initialized: F:\Code\forge\logs\forge.log
+2025-11-15T16:03:33.069373Z  INFO \x1b[92m✓\x1b[0m \x1b[96mDX editor extension\x1b[0m detected
+2025-11-15T16:03:33.069816Z  INFO \x1b[94m📡\x1b[0m \x1b[1;96mLSP-based detection\x1b[0m mode enabled
+2025-11-15T16:03:33.070037Z  INFO \x1b[90m→\x1b[0m Listening for LSP events...

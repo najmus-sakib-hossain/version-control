@@ -4,6 +4,8 @@
   "description": "Real-time file change detection with AST visualization and beautiful output logging",
   "version": "0.0.1",
   "publisher": "dx-tools",
+  "repository": "https://github.com/najmus-sakib-hossain/forge",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
